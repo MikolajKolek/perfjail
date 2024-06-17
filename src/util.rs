@@ -1,0 +1,13 @@
+use std::io::Error;
+use libc::{size_t};
+
+/// The stack size (in bytes) for creating the child process with [`clone`]
+///
+/// The standard Linux process stack size is usually 8MB, but the process we create consumes practically no memory, so it can be greatly decreased here
+pub const CHILD_STACK_SIZE: size_t = 65536;
+
+pub const CYCLES_PER_SECOND: i64 = 2_000_000_000;
+
+pub(crate) fn errno() -> i32 {
+	Error::last_os_error().raw_os_error().unwrap()
+}

@@ -12,3 +12,11 @@ Cargo.lock
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+
+# Ignore files without extensions in the tests/ directory and its subdirectories
+tests/**/*
+tests/**/!/**/
+tests/**/!*.*
+
+# Ignore the test_output file - it's used as output for all the tests
+tests/test_output.out
