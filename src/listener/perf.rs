@@ -1,6 +1,5 @@
 use std::ffi::{c_int, c_long, c_ulong, c_void};
 use std::mem::{size_of_val, zeroed};
-use std::time::Duration;
 
 use libc::{__u64, close, pthread_barrier_destroy, pthread_barrier_init, pthread_barrier_t, pthread_barrier_wait, pthread_barrierattr_destroy, pthread_barrierattr_init, pthread_barrierattr_setpshared, pthread_barrierattr_t, PTHREAD_PROCESS_SHARED, read};
 use perf_event_open_sys::bindings::{PERF_COUNT_HW_INSTRUCTIONS, perf_event_attr, PERF_FLAG_FD_CLOEXEC, PERF_FLAG_FD_NO_GROUP, PERF_TYPE_HARDWARE};
@@ -9,9 +8,8 @@ use perf_event_open_sys::perf_event_open;
 use crate::listener::Listener;
 use crate::process::data::{ExecutionData, ExecutionSettings};
 use crate::process::ExecuteAction;
-use crate::process::ExitResult::Killed;
-use crate::process::KillReason::TLE;
-use crate::util::{CYCLES_PER_SECOND, errno};
+use crate::process::execution_result::ExitStatus;
+use crate::util::errno;
 
 #[derive(Debug)]
 pub(crate) struct PerfListener {
@@ -59,7 +57,7 @@ impl Listener for PerfListener {
 			attrs.set_disabled(1);
 			attrs.set_enable_on_exec(1);
 			attrs.set_inherit(1);
-			
+
 			let perf_fd = perf_event_open(&mut attrs, data.pid.unwrap(), -1, -1, (PERF_FLAG_FD_NO_GROUP | PERF_FLAG_FD_CLOEXEC) as c_ulong);
 			self.perf_fd = Some(perf_fd);
 
@@ -69,10 +67,7 @@ impl Listener for PerfListener {
 	}
 
 	fn on_post_execute(&mut self, _: &ExecutionSettings, data: &mut ExecutionData) {
-		data.execution_result.instructions_used = Some(self.get_instructions_used());
-		data.execution_result.measured_time = Some(
-			Duration::from_millis((data.execution_result.instructions_used.unwrap() * 1_000 / CYCLES_PER_SECOND) as u64)
-		)
+		data.execution_result.set_instructions_used(self.get_instructions_used());
 	}
 	
 	fn on_wakeup(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> (ExecuteAction, Option<i32>) {
@@ -80,7 +75,7 @@ impl Listener for PerfListener {
 			let instructions_used = self.get_instructions_used();
 
 			if instructions_used > instruction_count_limit {
-				data.execution_result.exit_result = Killed { signal: -1, reason: TLE };
+				data.execution_result.set_exit_status(ExitStatus::TLE("time limit exceeded".into()));
 				(ExecuteAction::Kill, None)
 			} else {
 				(ExecuteAction::Continue, Some(1))

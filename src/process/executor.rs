@@ -25,8 +25,7 @@ pub struct Sio2jailExecutor {
 	pub(crate) stdin_fd: Option<OwnedFd>,
 	pub(crate) stdout_fd: Option<OwnedFd>,
 	pub(crate) stderr_fd: Option<OwnedFd>,
-	pub(crate) features: EnumSet<Feature>,
-	pub(crate) oversampling_factor: Option<i32>
+	pub(crate) features: EnumSet<Feature>
 }
 
 #[derive(EnumSetType, Debug)]
@@ -46,8 +45,7 @@ impl Sio2jailExecutor {
 			stdin_fd: None,
 			stdout_fd: None,
 			stderr_fd: None,
-			features: EnumSet::new(),
-			oversampling_factor: None
+			features: EnumSet::new()
 		}
 	}
 
@@ -104,12 +102,6 @@ impl Sio2jailExecutor {
 
 	pub fn measured_time_limit(mut self, limit: Duration) -> Sio2jailExecutor {
 		self.instruction_count_limit = Some((limit.as_millis() * ((CYCLES_PER_SECOND / 1_000) as u128)) as i64);
-		self = self.feature(PERF);
-		self
-	}
-	
-	pub fn perf_oversampling_factor(mut self, perf_oversampling_factor: i32) -> Sio2jailExecutor {
-		self.oversampling_factor = Some(perf_oversampling_factor);
 		self = self.feature(PERF);
 		self
 	}

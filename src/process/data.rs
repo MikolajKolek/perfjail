@@ -8,7 +8,7 @@ use std::time::Duration;
 use libc::c_char;
 
 use crate::listener::Listener;
-use crate::process::ExecutionResult;
+use crate::process::execution_result::ExecutionResult;
 use crate::process::executor::Sio2jailExecutor;
 
 #[derive(Debug)]
@@ -30,8 +30,7 @@ pub(crate) struct ExecutionSettings {
 	pub(crate) working_dir: PathBuf,
 	pub(crate) stdin_fd: Option<OwnedFd>,
 	pub(crate) stdout_fd: Option<OwnedFd>,
-	pub(crate) stderr_fd: Option<OwnedFd>,
-	pub(crate) oversampling_factor: i32
+	pub(crate) stderr_fd: Option<OwnedFd>
 }
 
 #[derive(Debug)]
@@ -53,8 +52,7 @@ impl ExecutionSettings {
 			working_dir: executor.working_dir,
 			stdin_fd: executor.stdin_fd,
 			stdout_fd: executor.stdout_fd,
-			stderr_fd: executor.stderr_fd,
-			oversampling_factor: executor.oversampling_factor.unwrap_or(2)
+			stderr_fd: executor.stderr_fd
 		};
 		
 		for arg in &result.args {
