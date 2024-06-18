@@ -11,6 +11,7 @@ pub mod process;
 #[cfg(test)]
 mod tests {
     use std::fs::File;
+    use std::time::Duration;
     use crate::process::executor::Feature::PERF;
     use crate::process::executor::Sio2jailExecutor;
     use crate::process::ExitResult::Exited;
@@ -23,6 +24,7 @@ mod tests {
             .stdin(File::open("tests/bud.in").unwrap())
             .stdout(File::create("tests/test_output.out").unwrap())
             .feature(PERF)
+            .measured_time_limit(Duration::from_millis(400))
             .spawn().unwrap();
         let result = child.run().unwrap();
         let Exited { exit_status: status } = result.exit_result else { panic!("not supposed to happen") };

@@ -51,8 +51,8 @@ impl Listener for PerfListener {
 		unsafe {
 			let mut attrs: perf_event_attr = zeroed();
 			attrs.type_ = PERF_TYPE_HARDWARE;
-			attrs.size = size_of_val(&attrs) as u32;
 			attrs.config = PERF_COUNT_HW_INSTRUCTIONS as __u64;
+			attrs.size = size_of_val(&attrs) as u32;
 			attrs.set_exclude_user(0);
 			attrs.set_exclude_kernel(1);
 			attrs.set_exclude_hv(1);
@@ -75,19 +75,19 @@ impl Listener for PerfListener {
 		)
 	}
 	
-	fn on_wakeup(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> ExecuteAction {
-		let instructions_used = self.get_instructions_used();
+	fn on_wakeup(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> (ExecuteAction, Option<i32>) {
+		if let Some(instruction_count_limit) = settings.instruction_count_limit {
+			let instructions_used = self.get_instructions_used();
 
-		if instructions_used > settings.instruction_count_limit.unwrap_or(i64::MAX) {
-			data.execution_result.exit_result = Killed { signal: -1, reason: TLE };
-			return ExecuteAction::Kill
+			if instructions_used > instruction_count_limit {
+				data.execution_result.exit_result = Killed { signal: -1, reason: TLE };
+				(ExecuteAction::Kill, None)
+			} else {
+				(ExecuteAction::Continue, Some(1))
+			}
+		} else {
+			(ExecuteAction::Continue, None)
 		}
-
-		ExecuteAction::Continue
-	}
-	
-	fn get(&mut self) -> i64 {
-		self.get_instructions_used()
 	}
 }
 

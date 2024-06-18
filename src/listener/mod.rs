@@ -12,7 +12,5 @@ pub(crate) trait Listener: Debug {
 
 	fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData);
 	
-	fn on_wakeup(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> ExecuteAction;
-	
-	fn get(&mut self) -> i64;
+	fn on_wakeup(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> (ExecuteAction, Option<i32>);
 }
