@@ -1,6 +1,6 @@
 use std::ffi::{c_int, c_void, CString, OsStr};
 use std::io;
-use std::os::fd::OwnedFd;
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::time::Duration;
 use cvt::cvt;
@@ -127,13 +127,17 @@ impl Sio2jailExecutor {
 		
 		let child_stack = unsafe { malloc(CHILD_STACK_SIZE) };
 		unsafe {
+			let mut pid_fd: c_int = -1;
+			
 			context.data.pid = Some(cvt(clone(
 				execute_child,
 				child_stack.add(CHILD_STACK_SIZE),
 				CLONE_VM | CLONE_PIDFD | SIGCHLD,
 				(&mut *context as *mut ExecutionContext) as *mut c_void,
-				&mut context.data.pid_fd as *mut c_int as *mut c_void
+				&mut pid_fd as *mut c_int as *mut c_void
 			)).unwrap());
+			
+			context.data.pid_fd = Some(OwnedFd::from_raw_fd(pid_fd));
 		}
 		
 		Ok(Sio2jailChild::new(context, child_stack))

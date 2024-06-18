@@ -19,17 +19,18 @@ mod tests {
     #[test]
     fn time_measurement_test() {
         //TODO: COMPREHENSIVE UNIT TESTING SYSTEM
-        
-        let mut child = Sio2jailExecutor::new("tests/bud")
+
+        let child = Sio2jailExecutor::new("tests/bud")
             .stdin(File::open("tests/bud.in").unwrap())
             .stdout(File::create("tests/test_output.out").unwrap())
             .feature(PERF)
             .measured_time_limit(Duration::from_millis(400))
             .spawn().unwrap();
         let result = child.run().unwrap();
+        println!("Exit result: {:?}", result.exit_result);
         let Exited { exit_status: status } = result.exit_result else { panic!("not supposed to happen") };
         println!("Exit status: {}, measured time: {}", status, result.measured_time.unwrap().as_millis());
-        
+
         assert_eq!(result.measured_time.unwrap().as_millis(), 458);
     }
 }

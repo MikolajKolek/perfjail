@@ -1,12 +1,12 @@
 use std::cmp::min;
 use std::ffi::{c_int, c_void, CString};
 use std::mem::zeroed;
-use std::os::fd::{AsRawFd, BorrowedFd};
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::ptr::null_mut;
 
 use libc::{chdir, CLD_DUMPED, CLD_EXITED, CLD_KILLED, CLD_STOPPED, CLD_TRAPPED, close, dup2, execv, free, id_t, kill, P_PID, siginfo_t, SIGKILL, waitid, waitpid, WEXITED, WNOHANG, WNOWAIT, WSTOPPED};
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+use nix::poll::{poll, PollFd, PollTimeout};
 
 use crate::process::{ExecuteEvent, ExecutionResult, ExitResult};
 use crate::process::data::ExecutionContext;
@@ -28,41 +28,42 @@ impl Sio2jailChild {
 		}
 	}
 
-	pub fn run(&mut self) -> Result<ExecutionResult, RunError> {
-		let poll_pid_fd = unsafe { PollFd::new(BorrowedFd::borrow_raw(self.context.data.pid_fd), PollFlags::POLLIN) };
+	pub fn run(mut self) -> Result<ExecutionResult, RunError> {
+		let context= &mut self.context;
+		//let poll_pid_fd = unsafe { PollFd::new(context.data.pid_fd.as_ref().unwrap().as_fd(), PollFlags::POLLIN) };
+		let poll_pid_fd = PollFd::new();
 		let mut poll_fds = [poll_pid_fd];
-		
-		self.context.listeners.iter_mut().for_each(|listener| listener.on_post_fork_parent(&self.context.settings, &mut self.context.data));
+
+		context.listeners.iter_mut().for_each(|listener| listener.on_post_fork_parent(&self.context.settings, &mut self.context.data));
 
 		loop {
 			let mut timeout: Option<i32> = None;
 			let mut action = Continue;
-			self.context.listeners.iter_mut().for_each(|listener| {
+			(&mut self.context.listeners).iter_mut().for_each(|listener| {
 				let (listener_action, listener_timeout) = listener.on_wakeup(&self.context.settings, &mut self.context.data);
 				action = action.preserve_kill(listener_action);
-				
+
 				if let Some(mut timeout) = timeout {
 					timeout = min(timeout, listener_timeout.unwrap_or(i32::MAX));
 				} else {
 					timeout = listener_timeout;
 				}
 			});
-			
+
 			if action == Kill {
 				self.kill_child();
 			}
 
 			let poll_result = poll(&mut poll_fds, PollTimeout::try_from(timeout.unwrap_or(-1)).unwrap()).unwrap();
-			println!("{}", poll_result);
 			if poll_result == 0 {
 				// This means that one of the listeners' timeouts has finished, and we need to call all the on_wakeup functions again
 				continue;
 			}
-			
+
 			let mut wait_info: siginfo_t = unsafe { zeroed() };
 			let return_value: c_int;
 			unsafe {
-				return_value = waitid(P_PID, self.context.data.pid.unwrap() as id_t, &mut wait_info as *mut siginfo_t, WEXITED | WSTOPPED | WNOWAIT);
+				return_value = waitid(P_PID, (&self).context.data.pid.unwrap() as id_t, &mut wait_info as *mut siginfo_t, WEXITED | WSTOPPED | WNOWAIT);
 			}
 
 			if return_value == -1 {
@@ -92,11 +93,11 @@ impl Sio2jailChild {
 			}
 
 			if matches!(event.exit_reason, Exited { .. }) || matches!(event.exit_reason, Killed { .. }) {
-				if event.pid == self.context.data.pid.unwrap() {
+				if event.pid == (&self).context.data.pid.unwrap() {
 					if let Exited { exit_status: status} = event.exit_reason {
-						self.context.data.execution_result.exit_result = ExitResult::Exited { exit_status: status }
+						(&mut self).context.data.execution_result.exit_result = ExitResult::Exited { exit_status: status }
 					} else if let Killed { signal: kill_signal } = event.exit_reason {
-						self.context.data.execution_result.exit_result = ExitResult::Killed { signal: kill_signal, reason: NONE }
+						(&mut self).context.data.execution_result.exit_result = ExitResult::Killed { signal: kill_signal, reason: NONE }
 					}
 					
 					break;
@@ -108,24 +109,17 @@ impl Sio2jailChild {
 			}
 		}
 
-		self.context.listeners.iter_mut().for_each(|listener| listener.on_post_execute(&self.context.settings, &mut self.context.data));
+		(&mut self.context.listeners).iter_mut().for_each(|listener| listener.on_post_execute(&self.context.settings, &mut self.context.data));
 		unsafe {
 			waitpid(-1, null_mut::<c_int>(), WNOHANG);
-			close(self.context.data.pid_fd);
 		}
 
-		Ok(self.context.data.execution_result)
+		Ok((&self).context.data.execution_result)
 	}
 
 	fn kill_child(&mut self) {
-		if self.context.data.pid.is_some() {
-			unsafe {
-				kill(self.context.data.pid.unwrap(), SIGKILL);
-				free(self.child_stack);
-			}
-			
-			self.context.data.execution_result.exit_result = ExitResult::Killed { signal: SIGKILL, reason: NONE };
-			self.context.data.pid = None;
+		unsafe {
+			kill(self.context.data.pid.unwrap(), SIGKILL);
 		}
 	}
 }
@@ -133,6 +127,10 @@ impl Sio2jailChild {
 impl Drop for Sio2jailChild {
 	fn drop(&mut self) {
 		self.kill_child();
+		
+		unsafe {
+			free(self.child_stack);
+		}
 	}
 }
 

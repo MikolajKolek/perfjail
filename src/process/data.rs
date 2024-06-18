@@ -36,7 +36,7 @@ pub(crate) struct ExecutionSettings {
 
 #[derive(Debug)]
 pub(crate) struct ExecutionData {
-	pub(crate) pid_fd: c_int,
+	pub(crate) pid_fd: Option<OwnedFd>,
 	pub(crate) pid: Option<c_int>,
 	pub(crate) execution_result: ExecutionResult,
 	pub(crate) child_error: io::Result<()>
@@ -69,7 +69,7 @@ impl ExecutionSettings {
 impl ExecutionData {
 	pub(crate) fn new() -> ExecutionData {
 		ExecutionData {
-			pid_fd: -1,
+			pid_fd: None,
 			pid: None,
 			execution_result: ExecutionResult::new(),
 			child_error: Ok(()),
