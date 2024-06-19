@@ -2,9 +2,9 @@ use std::io;
 use std::io::ErrorKind::NotFound;
 use std::process::Command;
 
+use crate::perf::PerfSetupError::{AuthenticationFailed, PkexecNotFound, SetupCommandFail};
 use sysctl::{Sysctl, SysctlError};
 use thiserror::Error;
-use crate::perf::PerfSetupError::{AuthenticationFailed, PkexecNotFound, SetupCommandFail};
 
 /// Error returned by [`setup_perf_temporarily`] and [`setup_perf_permanently`]
 #[derive(Error, Debug)]
@@ -44,7 +44,7 @@ pub fn test_perf() -> Result<bool, SysctlError> {
 /// This setup does not persist across reboots. For that, see [`setup_perf_permanently`]
 /// ```no_run
 /// use libsio2jail::perf::setup_perf_temporarily;
-/// 
+///
 /// // Temporarily set up Linux for using libsio2jail with perf
 /// setup_perf_temporarily().expect("failed to set up perf");
 /// ```
@@ -77,22 +77,24 @@ pub fn setup_perf_permanently() -> Result<(), PerfSetupError> {
 }
 
 fn pkexec_command(program: &str, args: Vec<&str>) -> Result<(), PerfSetupError> {
-	let output = Command::new("pkexec")
-		.arg(program)
-		.args(args)
-		.output();
+	let output = Command::new("pkexec").arg(program).args(args).output();
 
 	if let Ok(output) = output {
 		if output.status.code().is_none() {
-			Err(SetupCommandFail(String::from("the process was terminated by a signal")))
+			Err(SetupCommandFail(String::from(
+				"the process was terminated by a signal",
+			)))
 		} else if output.status.code().unwrap() == 127 || output.status.code().unwrap() == 126 {
 			Err(AuthenticationFailed)
 		} else if !output.stderr.is_empty() {
-			Err(SetupCommandFail(
-				String::from_utf8(output.stderr).map_err(|_| SetupCommandFail(String::from("stderr is not valid UTF-8")))?
-			))
+			Err(SetupCommandFail(String::from_utf8(output.stderr).map_err(
+				|_| SetupCommandFail(String::from("stderr is not valid UTF-8")),
+			)?))
 		} else if output.status.code().unwrap() != 0 {
-			Err(SetupCommandFail(format!("the process returned a non-zero return code: {}", output.status.code().unwrap())))
+			Err(SetupCommandFail(format!(
+				"the process returned a non-zero return code: {}",
+				output.status.code().unwrap()
+			)))
 		} else {
 			Ok(())
 		}

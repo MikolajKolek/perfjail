@@ -5,40 +5,42 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::path::PathBuf;
 use std::ptr::null_mut;
 
-use libc::{CLD_DUMPED, CLD_EXITED, CLD_KILLED, free, id_t, kill, P_PID, siginfo_t, SIGKILL, waitid, waitpid, WEXITED, WNOHANG, WNOWAIT, WSTOPPED};
+use libc::{
+	free, id_t, kill, siginfo_t, waitid, waitpid, CLD_DUMPED, CLD_EXITED, CLD_KILLED, P_PID,
+	SIGKILL, WEXITED, WNOHANG, WNOWAIT, WSTOPPED,
+};
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::unistd::{chdir, close, dup2, execv};
 
 use crate::process::data::ExecutionContext;
 use crate::process::error::RunError;
-use crate::process::ExecuteAction::{Continue, Kill};
 use crate::process::execution_result::{ExecutionResult, ExitResult};
+use crate::process::ExecuteAction::{Continue, Kill};
 
 pub struct Sio2jailChild<'a> {
 	context: Box<ExecutionContext<'a>>,
-	child_stack: *mut c_void
+	child_stack: *mut c_void,
 }
 
 impl Sio2jailChild<'_> {
 	pub(crate) fn new(context: Box<ExecutionContext>, child_stack: *mut c_void) -> Sio2jailChild {
 		Sio2jailChild {
 			context,
-			child_stack
+			child_stack,
 		}
 	}
 
 	pub fn run(mut self) -> Result<ExecutionResult, RunError> {
-		self.context.listeners.iter_mut().for_each(|listener| listener.on_post_fork_parent(&self.context.settings, &mut self.context.data));
-
-		if self.context.data.child_error.is_some() {
-			return Err(self.context.data.child_error.unwrap().into());
-		}
+		self.context.listeners.iter_mut().for_each(|listener| {
+			listener.on_post_fork_parent(&self.context.settings, &mut self.context.data)
+		});
 
 		loop {
 			let mut timeout: Option<i32> = None;
 			let mut action = Continue;
 			self.context.listeners.iter_mut().for_each(|listener| {
-				let (listener_action, listener_timeout) = listener.on_wakeup(&self.context.settings, &mut self.context.data);
+				let (listener_action, listener_timeout) =
+					listener.on_wakeup(&self.context.settings, &mut self.context.data);
 				action = action.preserve_kill(listener_action);
 
 				if let Some(mut timeout) = &timeout {
@@ -52,30 +54,54 @@ impl Sio2jailChild<'_> {
 				self.kill_child();
 			}
 
-			let poll_pid_fd = unsafe { PollFd::new(self.context.data.pid_fd.as_ref().unwrap().as_fd(), PollFlags::POLLIN) };
+			let poll_pid_fd = PollFd::new(
+				self.context.data.pid_fd.as_ref().unwrap().as_fd(),
+				PollFlags::POLLIN,
+			);
 			let mut poll_fds = [poll_pid_fd];
-			let poll_result = poll(&mut poll_fds, PollTimeout::try_from(timeout.unwrap_or(-1)).unwrap()).unwrap();
+			let poll_result = poll(
+				&mut poll_fds,
+				PollTimeout::try_from(timeout.unwrap_or(-1)).unwrap(),
+			)
+			.unwrap();
 			if poll_result == 0 {
 				// This means that one of the listeners' timeouts has finished, and we need to call all the on_wakeup functions again
 				continue;
 			}
 
 			let mut wait_info: siginfo_t = unsafe { zeroed() };
-			let return_value: c_int;
 			unsafe {
-				return_value = waitid(P_PID, (&self).context.data.pid.unwrap() as id_t, &mut wait_info as *mut siginfo_t, WEXITED | WSTOPPED | WNOWAIT);
+				_ = waitid(
+					P_PID,
+					(&self).context.data.pid.unwrap() as id_t,
+					&mut wait_info as *mut siginfo_t,
+					WEXITED | WSTOPPED | WNOWAIT,
+				);
 			}
 
-			if return_value == -1 {
-				panic!("oopsie")
+			if self.context.data.child_error.is_some() {
+				return Err(self.context.data.child_error.take().unwrap());
 			}
 
-			if wait_info.si_code == CLD_EXITED || wait_info.si_code == CLD_KILLED || wait_info.si_code == CLD_DUMPED {
+			if wait_info.si_code == CLD_EXITED
+				|| wait_info.si_code == CLD_KILLED
+				|| wait_info.si_code == CLD_DUMPED
+			{
 				unsafe {
 					if wait_info.si_code == CLD_EXITED {
-						self.context.data.execution_result.set_exit_result(ExitResult::Exited { exit_status: wait_info.si_status() });
+						self.context
+							.data
+							.execution_result
+							.set_exit_result(ExitResult::Exited {
+								exit_status: wait_info.si_status(),
+							});
 					} else {
-						self.context.data.execution_result.set_exit_result(ExitResult::Killed { signal: wait_info.si_status() });
+						self.context
+							.data
+							.execution_result
+							.set_exit_result(ExitResult::Killed {
+								signal: wait_info.si_status(),
+							});
 					}
 				}
 
@@ -83,7 +109,9 @@ impl Sio2jailChild<'_> {
 			}
 		}
 
-		self.context.listeners.iter_mut().for_each(|listener| listener.on_post_execute(&self.context.settings, &mut self.context.data));
+		self.context.listeners.iter_mut().for_each(|listener| {
+			listener.on_post_execute(&self.context.settings, &mut self.context.data)
+		});
 		unsafe {
 			waitpid(-1, null_mut::<c_int>(), WNOHANG);
 		}
@@ -117,13 +145,16 @@ pub(crate) extern "C" fn execute_child(memory: *mut c_void) -> c_int {
 	1
 }
 
-fn execute_child_impl(context: &mut ExecutionContext) -> nix::Result<()> {
-	context.listeners.iter_mut().for_each(|listener| listener.on_post_fork_child(&context.settings, &context.data));
+fn execute_child_impl(context: &mut ExecutionContext) -> Result<(), RunError> {
+	context
+		.listeners
+		.iter_mut()
+		.try_for_each(|listener| listener.on_post_fork_child(&context.settings, &context.data))?;
 
 	if context.settings.working_dir != PathBuf::new() {
 		chdir(&context.settings.working_dir)?;
 	}
-	
+
 	if let Some(stdin_fd) = context.settings.stdin_fd.as_ref() {
 		dup2(stdin_fd.as_raw_fd(), 0)?;
 		close(stdin_fd.as_raw_fd())?;
@@ -139,5 +170,6 @@ fn execute_child_impl(context: &mut ExecutionContext) -> nix::Result<()> {
 
 	execv(&context.settings.executable_path, &context.settings.args)?;
 
-	panic!("AAAA add error handling here")
+	// Execv returns only if it has failed, in which case the function returns the appropriate result
+	unreachable!();
 }

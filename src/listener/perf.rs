@@ -1,29 +1,38 @@
 use std::ffi::{c_int, c_long, c_ulong, c_void};
 use std::mem::{size_of_val, zeroed};
 
-use libc::{__u64, close, pthread_barrier_destroy, pthread_barrier_init, pthread_barrier_t, pthread_barrier_wait, pthread_barrierattr_destroy, pthread_barrierattr_init, pthread_barrierattr_setpshared, pthread_barrierattr_t, PTHREAD_PROCESS_SHARED, read};
-use perf_event_open_sys::bindings::{PERF_COUNT_HW_INSTRUCTIONS, perf_event_attr, PERF_FLAG_FD_CLOEXEC, PERF_FLAG_FD_NO_GROUP, PERF_TYPE_HARDWARE};
+use cvt::cvt;
+use libc::{
+	__u64, close, pthread_barrier_destroy, pthread_barrier_init, pthread_barrier_t,
+	pthread_barrier_wait, pthread_barrierattr_destroy, pthread_barrierattr_init,
+	pthread_barrierattr_setpshared, pthread_barrierattr_t, read, PTHREAD_PROCESS_SHARED,
+};
+use perf_event_open_sys::bindings::{
+	perf_event_attr, PERF_COUNT_HW_INSTRUCTIONS, PERF_FLAG_FD_CLOEXEC, PERF_FLAG_FD_NO_GROUP,
+	PERF_TYPE_HARDWARE,
+};
 use perf_event_open_sys::perf_event_open;
 
 use crate::listener::Listener;
 use crate::process::data::{ExecutionData, ExecutionSettings};
-use crate::process::ExecuteAction;
+use crate::process::error::RunError;
 use crate::process::execution_result::ExitStatus;
+use crate::process::ExecuteAction;
 use crate::util::errno;
 
 #[derive(Debug)]
 pub(crate) struct PerfListener {
 	barrier: pthread_barrier_t,
-	perf_fd: Option<c_int>
+	perf_fd: Option<c_int>,
 }
 
 impl PerfListener {
 	pub(crate) fn new() -> PerfListener {
 		let mut result = PerfListener {
 			barrier: unsafe { zeroed() },
-			perf_fd: None
+			perf_fd: None,
 		};
-		
+
 		unsafe {
 			let barrier_: *mut pthread_barrier_t = &mut result.barrier as *mut pthread_barrier_t;
 
@@ -39,10 +48,18 @@ impl PerfListener {
 }
 
 impl Listener for PerfListener {
-	fn on_post_fork_child(&mut self, _: &ExecutionSettings, _: &ExecutionData) {
+	fn on_post_fork_child(
+		&mut self,
+		_: &ExecutionSettings,
+		_: &ExecutionData,
+	) -> Result<(), RunError> {
 		unsafe {
-			pthread_barrier_wait(&mut self.barrier as *mut pthread_barrier_t);
+			cvt(pthread_barrier_wait(
+				&mut self.barrier as *mut pthread_barrier_t,
+			))?;
 		}
+
+		Ok(())
 	}
 
 	fn on_post_fork_parent(&mut self, _settings: &ExecutionSettings, data: &mut ExecutionData) {
@@ -58,7 +75,13 @@ impl Listener for PerfListener {
 			attrs.set_enable_on_exec(1);
 			attrs.set_inherit(1);
 
-			let perf_fd = perf_event_open(&mut attrs, data.pid.unwrap(), -1, -1, (PERF_FLAG_FD_NO_GROUP | PERF_FLAG_FD_CLOEXEC) as c_ulong);
+			let perf_fd = perf_event_open(
+				&mut attrs,
+				data.pid.unwrap(),
+				-1,
+				-1,
+				(PERF_FLAG_FD_NO_GROUP | PERF_FLAG_FD_CLOEXEC) as c_ulong,
+			);
 			self.perf_fd = Some(perf_fd);
 
 			pthread_barrier_wait(&mut self.barrier as *mut pthread_barrier_t);
@@ -67,15 +90,21 @@ impl Listener for PerfListener {
 	}
 
 	fn on_post_execute(&mut self, _: &ExecutionSettings, data: &mut ExecutionData) {
-		data.execution_result.set_instructions_used(self.get_instructions_used());
+		data.execution_result
+			.set_instructions_used(self.get_instructions_used());
 	}
-	
-	fn on_wakeup(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> (ExecuteAction, Option<i32>) {
+
+	fn on_wakeup(
+		&mut self,
+		settings: &ExecutionSettings,
+		data: &mut ExecutionData,
+	) -> (ExecuteAction, Option<i32>) {
 		if let Some(instruction_count_limit) = settings.instruction_count_limit {
 			let instructions_used = self.get_instructions_used();
 
 			if instructions_used > instruction_count_limit {
-				data.execution_result.set_exit_status(ExitStatus::TLE("time limit exceeded".into()));
+				data.execution_result
+					.set_exit_status(ExitStatus::TLE("time limit exceeded".into()));
 				(ExecuteAction::Kill, None)
 			} else {
 				(ExecuteAction::Continue, Some(1))
@@ -89,7 +118,9 @@ impl Listener for PerfListener {
 impl Drop for PerfListener {
 	fn drop(&mut self) {
 		if self.perf_fd.is_some() {
-			unsafe { close(self.perf_fd.unwrap()); }
+			unsafe {
+				close(self.perf_fd.unwrap());
+			}
 			self.perf_fd = None;
 		}
 	}
@@ -100,7 +131,11 @@ impl PerfListener {
 		let mut instructions_used: i64 = 0;
 
 		unsafe {
-			let size = read(self.perf_fd.unwrap(), &mut instructions_used as *mut c_long as *mut c_void, size_of_val(&instructions_used));
+			let size = read(
+				self.perf_fd.unwrap(),
+				&mut instructions_used as *mut c_long as *mut c_void,
+				size_of_val(&instructions_used),
+			);
 
 			if size != size_of_val(&instructions_used) as isize {
 				panic!("ERROR {} {}\n\n", size, errno());

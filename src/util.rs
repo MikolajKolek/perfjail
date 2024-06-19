@@ -1,5 +1,5 @@
+use libc::size_t;
 use std::io::Error;
-use libc::{size_t};
 
 /// The stack size (in bytes) for creating the child process with [`clone`]
 ///

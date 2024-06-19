@@ -1,16 +1,16 @@
 use crate::process::ExecuteAction::{Continue, Kill};
 
 pub mod child;
-/// The executor used for running sio2jail
-pub mod executor;
 pub mod data;
 pub mod error;
 pub mod execution_result;
+/// The executor used for running sio2jail
+pub mod executor;
 
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) enum ExecuteAction {
 	Continue,
-	Kill
+	Kill,
 }
 
 impl ExecuteAction {
