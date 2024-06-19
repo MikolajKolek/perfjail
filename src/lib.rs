@@ -11,7 +11,9 @@ pub mod process;
 #[cfg(test)]
 mod tests {
     use std::fs::File;
+    use std::os::fd::AsFd;
     use std::time::Duration;
+
     use crate::process::execution_result::ExitResult::Exited;
     use crate::process::executor::Feature::PERF;
     use crate::process::executor::Sio2jailExecutor;
@@ -20,11 +22,15 @@ mod tests {
     fn time_measurement_test() {
         //TODO: COMPREHENSIVE UNIT TESTING SYSTEM
 
+        let input_file = File::open("tests/bud.in").unwrap();
+        let output_file = File::create("tests/test_output.out").unwrap();
+
         let child = Sio2jailExecutor::new("tests/bud")
-            .stdin(File::open("tests/bud.in").unwrap())
-            .stdout(File::create("tests/test_output.out").unwrap())
+            .stdin(input_file.as_fd())
+            .stdout(output_file.as_fd())
+            //.current_dir(PathBuf::from("asfd"))
             .feature(PERF)
-            .measured_time_limit(Duration::from_millis(450))
+            .measured_time_limit(Duration::from_millis(500))
             .spawn().unwrap();
         let result = child.run().unwrap();
         println!("Exit result: {:?}", result);

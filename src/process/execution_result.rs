@@ -16,7 +16,12 @@ pub struct ExecutionResult {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExitStatus {
-    OK, RE(String), RV(String), TLE(String), MLE(String), OLE(String)
+    OK, 
+    RE(String), 
+    RV(String), 
+    TLE(String), 
+    MLE(String), 
+    OLE(String)
 }
 
 #[derive(Clone, Copy, Debug)]

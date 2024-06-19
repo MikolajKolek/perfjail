@@ -1,24 +1,25 @@
 use std::cmp::min;
-use std::ffi::{c_int, c_void, CString};
+use std::ffi::{c_int, c_void};
 use std::mem::zeroed;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::PathBuf;
 use std::ptr::null_mut;
 
-use libc::{chdir, CLD_DUMPED, CLD_EXITED, CLD_KILLED, close, dup2, execv, free, id_t, kill, P_PID, siginfo_t, SIGKILL, waitid, waitpid, WEXITED, WNOHANG, WNOWAIT, WSTOPPED};
+use libc::{CLD_DUMPED, CLD_EXITED, CLD_KILLED, free, id_t, kill, P_PID, siginfo_t, SIGKILL, waitid, waitpid, WEXITED, WNOHANG, WNOWAIT, WSTOPPED};
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+use nix::unistd::{chdir, close, dup2, execv};
 
 use crate::process::data::ExecutionContext;
 use crate::process::error::RunError;
 use crate::process::ExecuteAction::{Continue, Kill};
 use crate::process::execution_result::{ExecutionResult, ExitResult};
 
-pub struct Sio2jailChild {
-	context: Box<ExecutionContext>,
+pub struct Sio2jailChild<'a> {
+	context: Box<ExecutionContext<'a>>,
 	child_stack: *mut c_void
 }
 
-impl Sio2jailChild {
+impl Sio2jailChild<'_> {
 	pub(crate) fn new(context: Box<ExecutionContext>, child_stack: *mut c_void) -> Sio2jailChild {
 		Sio2jailChild {
 			context,
@@ -28,6 +29,10 @@ impl Sio2jailChild {
 
 	pub fn run(mut self) -> Result<ExecutionResult, RunError> {
 		self.context.listeners.iter_mut().for_each(|listener| listener.on_post_fork_parent(&self.context.settings, &mut self.context.data));
+
+		if self.context.data.child_error.is_some() {
+			return Err(self.context.data.child_error.unwrap().into());
+		}
 
 		loop {
 			let mut timeout: Option<i32> = None;
@@ -78,7 +83,7 @@ impl Sio2jailChild {
 			}
 		}
 
-		(&mut self.context.listeners).iter_mut().for_each(|listener| listener.on_post_execute(&self.context.settings, &mut self.context.data));
+		self.context.listeners.iter_mut().for_each(|listener| listener.on_post_execute(&self.context.settings, &mut self.context.data));
 		unsafe {
 			waitpid(-1, null_mut::<c_int>(), WNOHANG);
 		}
@@ -93,10 +98,10 @@ impl Sio2jailChild {
 	}
 }
 
-impl Drop for Sio2jailChild {
+impl Drop for Sio2jailChild<'_> {
 	fn drop(&mut self) {
 		self.kill_child();
-		
+
 		unsafe {
 			free(self.child_stack);
 		}
@@ -107,35 +112,32 @@ pub(crate) extern "C" fn execute_child(memory: *mut c_void) -> c_int {
 	let context_ptr = memory as *mut ExecutionContext;
 	let context = unsafe { &mut (*context_ptr) };
 
+	context.data.child_error = Some(execute_child_impl(context).unwrap_err());
+
+	1
+}
+
+fn execute_child_impl(context: &mut ExecutionContext) -> nix::Result<()> {
 	context.listeners.iter_mut().for_each(|listener| listener.on_post_fork_child(&context.settings, &context.data));
 
 	if context.settings.working_dir != PathBuf::new() {
-		unsafe {
-			let path_c_str = CString::new(context.settings.working_dir.to_str().expect("Couldn't convert working_dir to str").as_bytes()).expect("Couldn't convert working_dir to CString");
-			chdir(path_c_str.as_ptr());
-		}
-	}
-
-	unsafe {
-		if let Some(stdin_fd) = context.settings.stdin_fd.as_ref() {
-			dup2(stdin_fd.as_raw_fd(), 0 as c_int);
-			close(stdin_fd.as_raw_fd());
-		}
-
-		if let Some(stdout_fd) = context.settings.stdout_fd.as_ref() {
-			dup2(stdout_fd.as_raw_fd(), 1 as c_int);
-			close(stdout_fd.as_raw_fd());
-		}
-
-		if let Some(stderr_fd) = context.settings.stderr_fd.as_ref() {
-			dup2(stderr_fd.as_raw_fd(), 2 as c_int);
-			close(stderr_fd.as_raw_fd());
-		}
+		chdir(&context.settings.working_dir)?;
 	}
 	
-	unsafe {
-		execv(context.settings.executable_path.as_ptr(), context.settings.args_ptr.as_ptr());
+	if let Some(stdin_fd) = context.settings.stdin_fd.as_ref() {
+		dup2(stdin_fd.as_raw_fd(), 0)?;
+		close(stdin_fd.as_raw_fd())?;
 	}
+	if let Some(stdout_fd) = context.settings.stdout_fd.as_ref() {
+		dup2(stdout_fd.as_raw_fd(), 1 as c_int)?;
+		close(stdout_fd.as_raw_fd())?;
+	}
+	if let Some(stderr_fd) = context.settings.stderr_fd.as_ref() {
+		dup2(stderr_fd.as_raw_fd(), 2 as c_int)?;
+		close(stderr_fd.as_raw_fd())?;
+	}
+
+	execv(&context.settings.executable_path, &context.settings.args)?;
 
 	panic!("AAAA add error handling here")
 }
