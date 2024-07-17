@@ -1,12 +1,13 @@
 #![warn(missing_docs)]
 //! A Rust reimplementation sio2jail - a tool for supervising the execution of programs submitted in algorithmic competitions
 
-mod listener;
-/// Utilities for setting up Linux for using libsio2jail with perf
-pub mod perf;
-/// A module for creating and managing libsio2jail processes
+/// Utilities for setting Linux up for libsio2jail use
+pub mod setup;
+/// Utilities for creating and managing libsio2jail processes
 pub mod process;
+
 mod util;
+mod listener;
 
 #[cfg(test)]
 mod tests {
@@ -14,7 +15,7 @@ mod tests {
 	use std::os::fd::AsFd;
 	use std::time::Duration;
 
-	use crate::process::execution_result::ExitResult::Exited;
+	use crate::process::execution_result::ExitReason::Exited;
 	use crate::process::executor::Feature::PERF;
 	use crate::process::executor::Sio2jailExecutor;
 
@@ -38,7 +39,7 @@ mod tests {
 		println!("Exit result: {:?}", result);
 		let Exited {
 			exit_status: status,
-		} = result.exit_result
+		} = result.exit_reason
 		else {
 			panic!("not supposed to happen")
 		};

@@ -14,7 +14,7 @@ use nix::unistd::{chdir, close, dup2, execv};
 
 use crate::process::data::ExecutionContext;
 use crate::process::error::RunError;
-use crate::process::execution_result::{ExecutionResult, ExitResult};
+use crate::process::execution_result::{ExecutionResult, ExitReason};
 use crate::process::ExecuteAction::{Continue, Kill};
 
 pub struct Sio2jailChild<'a> {
@@ -92,14 +92,14 @@ impl Sio2jailChild<'_> {
 						self.context
 							.data
 							.execution_result
-							.set_exit_result(ExitResult::Exited {
+							.set_exit_result(ExitReason::Exited {
 								exit_status: wait_info.si_status(),
 							});
 					} else {
 						self.context
 							.data
 							.execution_result
-							.set_exit_result(ExitResult::Killed {
+							.set_exit_result(ExitReason::Killed {
 								signal: wait_info.si_status(),
 							});
 					}

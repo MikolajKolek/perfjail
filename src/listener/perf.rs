@@ -16,8 +16,7 @@ use perf_event_open_sys::perf_event_open;
 use crate::listener::Listener;
 use crate::process::data::{ExecutionData, ExecutionSettings};
 use crate::process::error::RunError;
-use crate::process::execution_result::ExitStatus;
-use crate::process::ExecuteAction;
+use crate::process::{ExecuteAction, ExitStatus};
 use crate::util::errno;
 
 #[derive(Debug)]

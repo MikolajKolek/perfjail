@@ -15,7 +15,7 @@ use crate::process::data::{ExecutionContext, ExecutionData, ExecutionSettings};
 use crate::process::executor::Feature::PERF;
 use crate::util::{CHILD_STACK_SIZE, CYCLES_PER_SECOND};
 
-#[allow(dead_code)]
+/// The executor used to configure and spawn libsio2jail processes
 pub struct Sio2jailExecutor<'a> {
 	pub(crate) real_time_limit: Option<Duration>,
 	pub(crate) instruction_count_limit: Option<i64>,
@@ -28,8 +28,10 @@ pub struct Sio2jailExecutor<'a> {
 	pub(crate) features: EnumSet<Feature>,
 }
 
+/// Feature flags dictating sandboxing and measurement options for the child process
 #[derive(EnumSetType, Debug)]
 pub enum Feature {
+	/// Causes libsio2jail to measure the number of CPU instructions executed by the child program, allowing for much more accurate time measurement. Causes the [ExecutionResult](crate::process::ExecutionResult) returned by [`Sio2jailChild::run`] to include the [instructions_used](crate::process::execution_result::ExecutionResult::instructions_used) and [measured_time](crate::process::execution_result::ExecutionResult::measured_time) fields
 	PERF,
 }
 

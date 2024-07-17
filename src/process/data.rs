@@ -18,7 +18,6 @@ pub(crate) struct ExecutionContext<'a> {
 	pub(crate) listeners: Vec<Box<dyn Listener>>,
 }
 
-#[allow(dead_code)]
 #[readonly::make]
 #[derive(Debug)]
 pub(crate) struct ExecutionSettings<'a> {
@@ -26,7 +25,6 @@ pub(crate) struct ExecutionSettings<'a> {
 	pub(crate) instruction_count_limit: Option<i64>,
 	pub(crate) executable_path: CString,
 	pub(crate) args: Vec<CString>,
-	pub(crate) args_ptr: Vec<*const c_char>,
 	pub(crate) working_dir: PathBuf,
 	pub(crate) stdin_fd: Option<BorrowedFd<'a>>,
 	pub(crate) stdout_fd: Option<BorrowedFd<'a>>,
@@ -43,24 +41,16 @@ pub(crate) struct ExecutionData {
 
 impl ExecutionSettings<'_> {
 	pub(crate) fn new(executor: Sio2jailExecutor) -> ExecutionSettings {
-		let mut result = ExecutionSettings {
+		ExecutionSettings {
 			real_time_limit: executor.real_time_limit,
 			instruction_count_limit: executor.instruction_count_limit,
 			executable_path: executor.executable_path,
 			args: executor.args,
-			args_ptr: vec![],
 			working_dir: executor.working_dir,
 			stdin_fd: executor.stdin_fd,
 			stdout_fd: executor.stdout_fd,
 			stderr_fd: executor.stderr_fd,
-		};
-
-		for arg in &result.args {
-			result.args_ptr.push(arg.as_ptr());
 		}
-		result.args_ptr.push(null());
-
-		result
 	}
 }
 

@@ -2,15 +2,15 @@ use std::io;
 use std::io::ErrorKind::NotFound;
 use std::process::Command;
 
-use crate::perf::PerfSetupError::{AuthenticationFailed, PkexecNotFound, SetupCommandFail};
+use crate::setup::PerfSetupError::{AuthenticationFailed, PkexecNotFound, SetupCommandFail};
 use sysctl::{Sysctl, SysctlError};
 use thiserror::Error;
 
-/// Error returned by [`setup_perf_temporarily`] and [`setup_perf_permanently`]
+/// Error returned by [`set_perf_up_temporarily`] and [`set_perf_up_permanently`]
 #[derive(Error, Debug)]
 pub enum PerfSetupError {
-	/// Failed to run pkexec
-	#[error("Failed to run pkexec")]
+	/// Pkexec was not found
+	#[error("Pkexec was not found")]
 	PkexecNotFound,
 	/// Failed to elevate permissions using pkexec
 	#[error("Failed to elevate permissions using pkexec")]
@@ -23,9 +23,9 @@ pub enum PerfSetupError {
 	IoError(#[from] io::Error),
 }
 
-/// Checks if the Linux kernel parameters required for running libsio2jail with perf are set, returning true if they are and false if they aren't
+/// Checks if the Linux kernel parameters required for running libsio2jail with the [PERF](crate::process::executor::Feature::PERF) feature are set, returning true if they are and false if they aren't
 /// ```no_run
-/// use libsio2jail::perf::test_perf;
+/// use libsio2jail::setup::test_perf;
 ///
 /// // Verify that perf is properly set up
 /// assert_eq!(test_perf().unwrap_or(false), true);
@@ -39,35 +39,35 @@ pub fn test_perf() -> Result<bool, SysctlError> {
 	Ok(ctl_string == "-1")
 }
 
-/// Temporarily sets the Linux kernel parameters required for running libsio2jail with perf
+/// Temporarily sets the Linux kernel parameters required for running libsio2jail with the [PERF](crate::process::executor::Feature::PERF) feature
 ///
-/// This setup does not persist across reboots. For that, see [`setup_perf_permanently`]
+/// This setup does not persist across reboots. For that, see [`set_perf_up_permanently`]
 /// ```no_run
-/// use libsio2jail::perf::setup_perf_temporarily;
+/// use libsio2jail::setup::set_perf_up_temporarily;
 ///
-/// // Temporarily set up Linux for using libsio2jail with perf
-/// setup_perf_temporarily().expect("failed to set up perf");
+/// // Temporarily set Linux up for using libsio2jail with perf
+/// set_perf_up_temporarily().expect("failed to set up perf");
 /// ```
 /// # Errors
 /// Returns a [`PerfSetupError`] if setting perf up failed
-pub fn setup_perf_temporarily() -> Result<(), PerfSetupError> {
+pub fn set_perf_up_temporarily() -> Result<(), PerfSetupError> {
 	pkexec_command("sysctl", vec!["-w", "kernel.perf_event_paranoid=-1"])
 }
 
-/// Permanently sets the Linux kernel parameters required for running libsio2jail with perf (this persists across reboots)
+/// Permanently sets the Linux kernel parameters required for running libsio2jail with the [PERF](crate::process::executor::Feature::PERF) feature (this persists across reboots)
 ///
 /// This is achieved by adding a line to `/etc/sysctl.conf`
 ///
-/// If you want to set the kernel parameters without persisting across reboots, see [`setup_perf_temporarily`]
+/// If you want to set the kernel parameters without persisting across reboots, see [`set_perf_up_temporarily`]
 /// ```no_run
-/// use libsio2jail::perf::setup_perf_permanently;
+/// use libsio2jail::setup::set_perf_up_permanently;
 ///
-/// // Permanently set up Linux for using libsio2jail with perf
-/// setup_perf_permanently().expect("failed to set up perf");
+/// // Permanently set Linux up for using libsio2jail with perf
+/// set_perf_up_permanently().expect("failed to set up perf");
 /// ```
 /// # Errors
 /// Returns a [`PerfSetupError`] if setting perf up failed
-pub fn setup_perf_permanently() -> Result<(), PerfSetupError> {
+pub fn set_perf_up_permanently() -> Result<(), PerfSetupError> {
 	pkexec_command("bash", vec![
 		"-c",
 			"set -e;\

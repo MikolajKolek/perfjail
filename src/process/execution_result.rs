@@ -6,7 +6,8 @@ use crate::util::CYCLES_PER_SECOND;
 #[derive(Clone, Debug)]
 pub struct ExecutionResult {
 	pub exit_status: ExitStatus,
-	pub exit_result: ExitResult,
+	pub exit_reason: ExitReason,
+	/// Testing comment for instructions used
 	pub instructions_used: Option<i64>,
 	pub measured_time: Option<Duration>,
 	pub real_time: Option<Duration>,
@@ -25,7 +26,7 @@ pub enum ExitStatus {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum ExitResult {
+pub enum ExitReason {
 	Exited { exit_status: i32 },
 	Killed { signal: i32 },
 }
@@ -47,7 +48,7 @@ impl ExecutionResult {
 	pub(crate) fn new() -> ExecutionResult {
 		ExecutionResult {
 			exit_status: ExitStatus::OK,
-			exit_result: ExitResult::Exited { exit_status: 0 },
+			exit_reason: ExitReason::Exited { exit_status: 0 },
 			instructions_used: None,
 			measured_time: None,
 			real_time: None,
@@ -62,8 +63,8 @@ impl ExecutionResult {
 		}
 	}
 
-	pub(crate) fn set_exit_result(&mut self, exit_result: ExitResult) {
-		self.exit_result = exit_result
+	pub(crate) fn set_exit_result(&mut self, exit_reason: ExitReason) {
+		self.exit_reason = exit_reason
 	}
 
 	pub(crate) fn set_instructions_used(&mut self, instructions_used: i64) {

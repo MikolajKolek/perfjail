@@ -1,11 +1,17 @@
 use crate::process::ExecuteAction::{Continue, Kill};
 
-pub mod child;
-pub mod data;
-pub mod error;
-pub mod execution_result;
-/// The executor used for running sio2jail
-pub mod executor;
+pub(crate) mod child;
+pub(crate) mod data;
+pub(crate) mod error;
+pub(crate) mod execution_result;
+pub(crate) mod executor;
+
+pub use self::child::Sio2jailChild;
+pub use self::execution_result::ExitReason;
+pub use self::execution_result::ExecutionResult;
+pub use self::execution_result::ExitStatus;
+pub use self::executor::Sio2jailExecutor;
+pub use self::executor::Feature;
 
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) enum ExecuteAction {
@@ -14,7 +20,7 @@ pub(crate) enum ExecuteAction {
 }
 
 impl ExecuteAction {
-	fn preserve_kill(&self, other: ExecuteAction) -> ExecuteAction {
+	pub(crate) fn preserve_kill(&self, other: ExecuteAction) -> ExecuteAction {
 		if *self == Kill || other == Kill {
 			Kill
 		} else {
