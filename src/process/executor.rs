@@ -1,15 +1,16 @@
-use cvt::cvt;
 use std::ffi::{c_int, c_void, CString, OsStr};
 use std::io;
 use std::os::fd::{BorrowedFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use cvt::cvt;
 use enumset::{EnumSet, EnumSetType};
-use libc::{clone, malloc, CLONE_PIDFD, CLONE_VM, SIGCHLD};
+use libc::{clone, CLONE_PIDFD, CLONE_VM, malloc, SIGCHLD};
 
-use crate::listener::perf::PerfListener;
 use crate::listener::Listener;
+use crate::listener::perf::PerfListener;
+use crate::listener::seccomp::SeccompListener;
 use crate::process::child::{execute_child, Sio2jailChild};
 use crate::process::data::{ExecutionContext, ExecutionData, ExecutionSettings};
 use crate::process::executor::Feature::PERF;
@@ -17,7 +18,7 @@ use crate::util::{CHILD_STACK_SIZE, CYCLES_PER_SECOND};
 
 /// A builder based on [`std::process::Command`] used to configure and spawn libsio2jail processes.
 ///
-/// A default configuration can be generated using [`Sio2jailExecutor::new`]. '
+/// A default configuration can be generated using [`Sio2jailExecutor::new`].
 /// Additional builder methods allow the configuration to be changed (for example, by adding arguments) prior to spawning:
 /// ```
 /// use libsio2jail::process::Sio2jailExecutor;
@@ -55,6 +56,7 @@ pub enum Feature {
 	/// to include the [instructions_used](crate::process::execution_result::ExecutionResult::instructions_used)
 	/// and [measured_time](crate::process::execution_result::ExecutionResult::measured_time) fields.
 	PERF,
+	SECCOMP
 }
 
 #[allow(dead_code)]
@@ -213,31 +215,134 @@ impl<'a> Sio2jailExecutor<'a> {
 		self
 	}
 
+	/// Sets the file descriptor for the child process’s standard input (stdin)
+	///
+	/// If this function is not called, child stdin is inherited from the parent process
+	///
+	/// # Examples
+	///
+	/// Basic usage:
+	///
+	/// ```
+	/// use libsio2jail::process::Sio2jailExecutor;
+	/// use std::fs::File;
+	/// use std::os::fd::AsFd;
+	///
+	/// let file = File::open("/dev/null").unwrap();
+	///
+	/// Sio2jailExecutor::new("ls")
+	///     .stdin(file.as_fd())
+	///     .spawn()
+	///     .expect("failed to spawn child")
+	///     .run()
+	///     .expect("failed to run ls");
+	/// ```
 	pub fn stdin<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> Sio2jailExecutor<'a> {
 		self.stdin_fd = Some(fd.into());
 		self
 	}
 
+	/// Sets the file descriptor for the child process’s standard output (stdout)
+	///
+	/// If this function is not called, child stdout is inherited from the parent process
+	///
+	/// # Examples
+	///
+	/// Basic usage:
+	///
+	/// ```
+	/// use libsio2jail::process::Sio2jailExecutor;
+	/// use std::fs::File;
+	/// use std::os::fd::AsFd;
+	///
+	/// let file = File::open("/dev/null").unwrap();
+	///
+	/// Sio2jailExecutor::new("ls")
+	///     .stdout(file.as_fd())
+	///     .spawn()
+	///     .expect("failed to spawn child")
+	///     .run()
+	///     .expect("failed to run ls");
+	/// ```
 	pub fn stdout<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> Sio2jailExecutor<'a> {
 		self.stdout_fd = Some(fd.into());
 		self
 	}
 
+	/// Sets the file descriptor for the child process’s standard error (stderr)
+	///
+	/// If this function is not called, child stderr is inherited from the parent process
+	///
+	/// # Examples
+	///
+	/// Basic usage:
+	///
+	/// ```
+	/// use libsio2jail::process::Sio2jailExecutor;
+	/// use std::fs::File;
+	/// use std::os::fd::AsFd;
+	///
+	/// let file = File::open("/dev/null").unwrap();
+	///
+	/// Sio2jailExecutor::new("ls")
+	///     .stderr(file.as_fd())
+	///     .spawn()
+	///     .expect("failed to spawn child")
+	///     .run()
+	///     .expect("failed to run ls");
+	/// ```
 	pub fn stderr<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> Sio2jailExecutor<'a> {
 		self.stderr_fd = Some(fd.into());
 		self
 	}
 
-	pub fn feature(mut self, feature: Feature) -> Sio2jailExecutor<'a> {
-		self.features.insert(feature);
+	/// Adds feature flags to influence how program execution is sandboxed and measured
+	///
+	/// Multiple features can be added at once if they are separated by the `|` character
+	///
+	/// # Examples
+	///
+	/// Basic usage:
+	///
+	/// ```
+	/// use libsio2jail::process::Feature::{PERF, SECCOMP};
+	/// use libsio2jail::process::Sio2jailExecutor;
+	///
+	/// Sio2jailExecutor::new("ls")
+	///     .features(PERF | SECCOMP)
+	///     .spawn()
+	///     .expect("failed to spawn child")
+	///     .run()
+	///     .expect("failed to run ls");
+	/// ```
+	pub fn features<T: Into<EnumSet<Feature>>>(mut self, features: T) -> Sio2jailExecutor<'a> {
+		self.features.insert_all(features.into());
 		self
 	}
 
-	pub fn features(mut self, features: EnumSet<Feature>) -> Sio2jailExecutor<'a> {
-		self.features.insert_all(features);
-		self
-	}
-
+	/// Sets a limit on how much real time can pass after the child program is executed
+	/// before it is killed and [`ExitStatus::TLE`](crate::process::ExitStatus::TLE) is
+	/// returned as the exit status
+	///
+	/// # Examples
+	///
+	/// Basic usage:
+	/// 
+	/// ```
+	/// use std::time::Duration;
+	/// use libsio2jail::process::ExitStatus::TLE;
+	/// use libsio2jail::process::Sio2jailExecutor;
+	///
+	/// let result = Sio2jailExecutor::new("sleep")
+	///     .arg("1")
+	///     .real_time_limit(Duration::from_secs_f64(0.5))
+	///     .spawn()
+	///     .expect("failed to spawn child")
+	///     .run()
+	///     .expect("failed to run sleep");
+	///
+	/// assert!(matches!(1, 1));
+	/// ```
 	pub fn real_time_limit(mut self, limit: Duration) -> Sio2jailExecutor<'a> {
 		self.real_time_limit = Some(limit);
 		self
@@ -246,7 +351,7 @@ impl<'a> Sio2jailExecutor<'a> {
 	pub fn measured_time_limit(mut self, limit: Duration) -> Sio2jailExecutor<'a> {
 		self.instruction_count_limit =
 			Some((limit.as_millis() * ((CYCLES_PER_SECOND / 1_000) as u128)) as i64);
-		self = self.feature(PERF);
+		self = self.features(PERF);
 		self
 	}
 
@@ -256,6 +361,7 @@ impl<'a> Sio2jailExecutor<'a> {
 			.iter()
 			.map(|feature| match feature {
 				PERF => Box::new(PerfListener::new()) as Box<dyn Listener>,
+				Feature::SECCOMP => Box::new(SeccompListener::new()) as Box<dyn Listener>,
 			})
 			.collect();
 

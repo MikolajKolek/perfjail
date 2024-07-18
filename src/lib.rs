@@ -18,10 +18,21 @@ mod tests {
 	use crate::process::execution_result::ExitReason::Exited;
 	use crate::process::executor::Feature::PERF;
 	use crate::process::executor::Sio2jailExecutor;
+	use crate::process::Feature::SECCOMP;
 
 	#[test]
 	fn time_measurement_test() {
 		//TODO: COMPREHENSIVE UNIT TESTING SYSTEM
+
+		
+		// There is something incredibly strange going on with this
+		// When the code below is presant, the second s2jexecutor fails?? bizzare
+		Sio2jailExecutor::new("ls")
+			//.features(PERF)
+		     .spawn()
+		     .expect("failed to spawn child")
+		     .run()
+		    .expect("failed to run ls");
 
 		let input_file = File::open("tests/bud.in").unwrap();
 		let output_file = File::create("tests/test_output.out").unwrap();
@@ -30,7 +41,7 @@ mod tests {
 			.stdin(input_file.as_fd())
 			.stdout(output_file.as_fd())
 			//.current_dir(PathBuf::from("asfd"))
-			.feature(PERF)
+			.features(PERF)
 			.measured_time_limit(Duration::from_millis(500))
 			.spawn()
 			.unwrap();

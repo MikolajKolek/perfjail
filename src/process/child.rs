@@ -6,16 +6,16 @@ use std::path::PathBuf;
 use std::ptr::null_mut;
 
 use libc::{
-	free, id_t, kill, siginfo_t, waitid, waitpid, CLD_DUMPED, CLD_EXITED, CLD_KILLED, P_PID,
-	SIGKILL, WEXITED, WNOHANG, WNOWAIT, WSTOPPED,
+	CLD_DUMPED, CLD_EXITED, CLD_KILLED, free, id_t, kill, P_PID, siginfo_t, SIGKILL, waitid,
+	waitpid, WEXITED, WNOHANG, WNOWAIT, WSTOPPED,
 };
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
-use nix::unistd::{chdir, close, dup2, execv};
+use nix::unistd::{chdir, close, dup2, execvp};
 
 use crate::process::data::ExecutionContext;
 use crate::process::error::RunError;
-use crate::process::execution_result::{ExecutionResult, ExitReason};
 use crate::process::ExecuteAction::{Continue, Kill};
+use crate::process::execution_result::{ExecutionResult, ExitReason};
 
 pub struct Sio2jailChild<'a> {
 	context: Box<ExecutionContext<'a>>,
@@ -168,7 +168,7 @@ fn execute_child_impl(context: &mut ExecutionContext) -> Result<(), RunError> {
 		close(stderr_fd.as_raw_fd())?;
 	}
 
-	execv(&context.settings.executable_path, &context.settings.args)?;
+	execvp(&context.settings.executable_path, &context.settings.args)?;
 
 	// Execv returns only if it has failed, in which case the function returns the appropriate result
 	unreachable!();

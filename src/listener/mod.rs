@@ -5,6 +5,7 @@ use crate::process::error::RunError;
 use crate::process::ExecuteAction;
 
 pub(crate) mod perf;
+pub(crate) mod seccomp;
 
 pub(crate) trait Listener: Debug {
 	fn on_post_fork_child(
