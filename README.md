@@ -16,3 +16,5 @@ The project is also currently very much a work-in-progress, with messy, undocume
 Libsio2jail is licensed under the [MIT Licence](https://github.com/MikolajKolek/toster/blob/master/LICENSE)
 
 The project is based on [sio2jail](https://github.com/sio2project/sio2jail), which is also available under the MIT license
+
+The comments and basic structure for the `Sio2jailExecutor` are based on [`std::process::Command`](https://doc.rust-lang.org/std/process/struct.Command.html) from the [Rust standard library](https://github.com/rust-lang/rust), which is also available under the MIT license

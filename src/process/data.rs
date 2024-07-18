@@ -1,10 +1,7 @@
 use std::ffi::{c_int, CString};
 use std::os::fd::{BorrowedFd, OwnedFd};
 use std::path::PathBuf;
-use std::ptr::null;
 use std::time::Duration;
-
-use libc::c_char;
 
 use crate::listener::Listener;
 use crate::process::error::RunError;

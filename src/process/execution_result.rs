@@ -7,12 +7,11 @@ use crate::util::CYCLES_PER_SECOND;
 pub struct ExecutionResult {
 	pub exit_status: ExitStatus,
 	pub exit_reason: ExitReason,
-	/// Testing comment for instructions used
 	pub instructions_used: Option<i64>,
 	pub measured_time: Option<Duration>,
-	pub real_time: Option<Duration>,
-	pub user_time: Option<Duration>,
-	pub system_time: Option<Duration>,
+	pub real_time: Duration,
+	pub user_time: Duration,
+	pub system_time: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -51,9 +50,9 @@ impl ExecutionResult {
 			exit_reason: ExitReason::Exited { exit_status: 0 },
 			instructions_used: None,
 			measured_time: None,
-			real_time: None,
-			user_time: None,
-			system_time: None,
+			real_time: Duration::ZERO,
+			user_time: Duration::ZERO,
+			system_time: Duration::ZERO,
 		}
 	}
 
@@ -75,14 +74,14 @@ impl ExecutionResult {
 	}
 
 	pub(crate) fn set_real_time(&mut self, real_time: Duration) {
-		self.real_time = Some(real_time)
+		self.real_time = real_time
 	}
 
 	pub(crate) fn set_user_time(&mut self, user_time: Duration) {
-		self.user_time = Some(user_time)
+		self.user_time = user_time
 	}
 
 	pub(crate) fn set_system_time(&mut self, system_time: Duration) {
-		self.system_time = Some(system_time)
+		self.system_time = system_time
 	}
 }

@@ -2,7 +2,7 @@ use cvt::cvt;
 use std::ffi::{c_int, c_void, CString, OsStr};
 use std::io;
 use std::os::fd::{BorrowedFd, FromRawFd, OwnedFd};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use enumset::{EnumSet, EnumSetType};
@@ -15,7 +15,25 @@ use crate::process::data::{ExecutionContext, ExecutionData, ExecutionSettings};
 use crate::process::executor::Feature::PERF;
 use crate::util::{CHILD_STACK_SIZE, CYCLES_PER_SECOND};
 
-/// The executor used to configure and spawn libsio2jail processes
+/// A builder based on [`std::process::Command`] used to configure and spawn libsio2jail processes.
+///
+/// A default configuration can be generated using [`Sio2jailExecutor::new`]. '
+/// Additional builder methods allow the configuration to be changed (for example, by adding arguments) prior to spawning:
+/// ```
+/// use libsio2jail::process::Sio2jailExecutor;
+///
+/// let result = Sio2jailExecutor::new("sleep")
+///         .arg("1")
+///         .spawn()
+///         .expect("failed to spawn child")
+///         .run()
+///         .expect("failed to execute process");
+///
+/// let execution_time = result.real_time;
+/// ```
+///
+/// Unlike [`std::process::Command`], `Sio2jailExecutor` cannot be used to spawn multiple
+/// processes, as [`Sio2jailExecutor::spawn`] consumes itself after it's called.
 pub struct Sio2jailExecutor<'a> {
 	pub(crate) real_time_limit: Option<Duration>,
 	pub(crate) instruction_count_limit: Option<i64>,
@@ -28,15 +46,46 @@ pub struct Sio2jailExecutor<'a> {
 	pub(crate) features: EnumSet<Feature>,
 }
 
-/// Feature flags dictating sandboxing and measurement options for the child process
+/// Feature flags dictating sandboxing and performance measurement options for the child process.
 #[derive(EnumSetType, Debug)]
 pub enum Feature {
-	/// Causes libsio2jail to measure the number of CPU instructions executed by the child program, allowing for much more accurate time measurement. Causes the [ExecutionResult](crate::process::ExecutionResult) returned by [`Sio2jailChild::run`] to include the [instructions_used](crate::process::execution_result::ExecutionResult::instructions_used) and [measured_time](crate::process::execution_result::ExecutionResult::measured_time) fields
+	/// Causes libsio2jail to measure the number of CPU instructions executed
+	/// by the child program, allowing for much more accurate time measurement.
+	/// Causes the [ExecutionResult](crate::process::ExecutionResult) returned by [`Sio2jailChild::run`]
+	/// to include the [instructions_used](crate::process::execution_result::ExecutionResult::instructions_used)
+	/// and [measured_time](crate::process::execution_result::ExecutionResult::measured_time) fields.
 	PERF,
 }
 
 #[allow(dead_code)]
 impl<'a> Sio2jailExecutor<'a> {
+	/// Constructs a new `Sio2jailExecutor` for launching the program at path `program`, with the following default configuration:
+	///
+	/// - No arguments to the program
+	/// - Inherit the current process’s environment
+	/// - Inherit the current process’s working directory
+	/// - Inherit stdin/stdout/stderr
+	/// - Don't enable any features and don't set and time limits
+	///
+	/// Builder methods are provided to change these defaults and otherwise configure the process.
+	///
+	/// If `program` is not an absolute path, the `PATH` will be searched in an OS-defined way.
+	///
+	/// The search path to be used may be controlled by setting the `PATH` environment variable on the Command.
+	///
+	/// # Examples
+	///
+	/// Basic usage:
+	///
+	/// ```
+	/// use libsio2jail::process::Sio2jailExecutor;
+	///
+	/// Sio2jailExecutor::new("sh")
+ 	///     .spawn()
+ 	///     .expect("failed to spawn child")
+	///     .run()
+	///     .expect("failed to run sh");
+	/// ```
 	pub fn new<S: AsRef<OsStr>>(program: S) -> Sio2jailExecutor<'a> {
 		Sio2jailExecutor {
 			real_time_limit: None,
@@ -53,6 +102,46 @@ impl<'a> Sio2jailExecutor<'a> {
 		}
 	}
 
+	/// Adds an argument to pass to the program.
+	///
+	/// Only one argument can be passed per use. So instead of:
+	///
+	/// ```no_run
+	/// # libsio2jail::process::Sio2jailExecutor::new("sh")
+	/// .arg("-C /path/to/repo")
+	/// # ;
+	/// ```
+	///
+	/// usage would be:
+	///
+	/// ```no_run
+	/// # libsio2jail::process::Sio2jailExecutor::new("sh")
+	/// .arg("-C")
+	/// .arg("/path/to/repo")
+	/// # ;
+	/// ```
+	///
+	/// To pass multiple arguments see [`args`](Sio2jailExecutor::args).
+	///
+	/// Note that the argument is not passed through a shell, but given literally to the program.
+	/// This means that shell syntax like quotes, escaped characters, word splitting, glob patterns,
+	/// variable substitution, etc. have no effect.
+	///
+	/// # Examples
+	///
+	/// Basic usage:
+	///
+	/// ```
+	/// use libsio2jail::process::Sio2jailExecutor;
+ 	///
+	/// Sio2jailExecutor::new("ls")
+ 	///     .arg("-l")
+	///     .arg("-a")
+	///     .spawn()
+	///     .expect("failed to spawn child")
+	///     .run()
+	///     .expect("failed to run ls");
+	/// ```
 	pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Sio2jailExecutor<'a> {
 		self.args.push(
 			CString::new(arg.as_ref().as_encoded_bytes())
@@ -61,6 +150,29 @@ impl<'a> Sio2jailExecutor<'a> {
 		self
 	}
 
+	/// Adds multiple arguments to pass to the program.
+	///
+	/// To pass a single argument see [`arg`](Sio2jailExecutor::arg).
+	///
+	/// Note that the arguments are not passed through a shell, but given
+	/// literally to the program. This means that shell syntax like quotes,
+	/// escaped characters, word splitting, glob patterns, variable substitution, etc.
+	/// have no effect.
+	///
+	/// # Examples
+	///
+	/// Basic usage:
+	///
+	/// ```
+	/// use libsio2jail::process::Sio2jailExecutor;
+	///
+	/// Sio2jailExecutor::new("ls")
+	///     .args(["-l", "-a"])
+	///     .spawn()
+	///     .expect("failed to spawn child")
+	///     .run()
+	///     .expect("failed to run ls");
+	/// ```
 	pub fn args<I, S>(mut self, args: I) -> Sio2jailExecutor<'a>
 	where
 		I: IntoIterator<Item = S>,
@@ -72,8 +184,32 @@ impl<'a> Sio2jailExecutor<'a> {
 		self
 	}
 
-	pub fn current_dir(mut self, dir: PathBuf) -> Sio2jailExecutor<'a> {
-		self.working_dir = dir;
+	/// Sets the working directory for the child process.
+	///
+	/// # Platform-specific behavior
+	///
+	/// If the program path is relative (e.g., `"./script.sh"`), it's ambiguous
+	/// whether it should be interpreted relative to the parent's working
+	/// directory or relative to `current_dir`. The behavior in this case is
+	/// platform specific and unstable, and it's recommended to use
+	/// [`std::fs::canonicalize`] to get an absolute program path instead.
+	///
+	/// # Examples
+	///
+	/// Basic usage:
+	///
+	/// ```
+	/// use libsio2jail::process::Sio2jailExecutor;
+	///
+	/// Sio2jailExecutor::new("ls")
+	///     .current_dir("/bin")
+	///     .spawn()
+	///     .expect("failed to spawn child")
+	///     .run()
+	///     .expect("failed to run ls");
+	/// ```
+	pub fn current_dir<P: AsRef<Path>>(mut self, dir: P) -> Sio2jailExecutor<'a> {
+		self.working_dir = PathBuf::from(dir.as_ref().as_os_str());
 		self
 	}
 
