@@ -9,5 +9,5 @@ pub(crate) const CHILD_STACK_SIZE: size_t = 65536;
 pub(crate) const CYCLES_PER_SECOND: i64 = 2_000_000_000;
 
 pub(crate) fn errno() -> i32 {
-	Error::last_os_error().raw_os_error().unwrap()
+    Error::last_os_error().raw_os_error().unwrap()
 }

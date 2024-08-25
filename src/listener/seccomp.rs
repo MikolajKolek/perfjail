@@ -4,9 +4,7 @@ use crate::process::error::RunError;
 use crate::process::ExecuteAction;
 
 #[derive(Debug)]
-pub(crate) struct SeccompListener {
-    
-}
+pub(crate) struct SeccompListener {}
 
 impl SeccompListener {
     pub(crate) fn new() -> SeccompListener {
@@ -15,19 +13,23 @@ impl SeccompListener {
 }
 
 impl Listener for SeccompListener {
-    fn on_post_fork_child(&mut self, settings: &ExecutionSettings, data: &ExecutionData) -> Result<(), RunError> {
+    fn on_post_fork_child(
+        &mut self,
+        settings: &ExecutionSettings,
+        data: &ExecutionData,
+    ) -> Result<(), RunError> {
         Ok(())
     }
 
-    fn on_post_fork_parent(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) {
-        
-    }
+    fn on_post_fork_parent(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) {}
 
-    fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) {
-        
-    }
+    fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) {}
 
-    fn on_wakeup(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> (ExecuteAction, Option<i32>) {
+    fn on_wakeup(
+        &mut self,
+        settings: &ExecutionSettings,
+        data: &mut ExecutionData,
+    ) -> (ExecuteAction, Option<i32>) {
         (ExecuteAction::Continue, None)
     }
 }
