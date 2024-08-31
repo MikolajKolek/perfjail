@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::cmp::min;
 use std::ffi::{c_int, c_void};
 use std::io;
@@ -5,11 +6,8 @@ use std::mem::zeroed;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::PathBuf;
 use std::ptr::null_mut;
-
-use libc::{
-    free, id_t, kill, siginfo_t, waitid, waitpid, CLD_DUMPED, CLD_EXITED, CLD_KILLED, P_PID,
-    SIGKILL, WEXITED, WNOHANG, WNOWAIT, WSTOPPED,
-};
+use cvt::cvt;
+use libc::{id_t, kill, pid_t, siginfo_t, waitid, waitpid, CLD_DUMPED, CLD_EXITED, CLD_KILLED, P_PID, SIGKILL, WEXITED, WNOHANG, WNOWAIT, WSTOPPED};
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::unistd::{chdir, close, dup2, execvp};
 
@@ -49,14 +47,14 @@ use crate::process::ExecuteAction::{Continue, Kill};
 /// ```
 pub struct JailedChild<'a> {
     context: Box<ExecutionContext<'a>>,
-    child_stack: *mut c_void,
+    child_stack: Box<dyn Any>,
 }
 
 impl JailedChild<'_> {
     pub(crate) fn new(context: Box<ExecutionContext>, child_stack: *mut c_void) -> JailedChild {
         JailedChild {
             context,
-            child_stack,
+            child_stack: unsafe { Box::from_raw(child_stack) },
         }
     }
 
@@ -142,15 +140,11 @@ impl JailedChild<'_> {
         self.context.listeners.iter_mut().for_each(|listener| {
             listener.on_post_execute(&self.context.settings, &mut self.context.data)
         });
-        unsafe {
-            waitpid(-1, null_mut::<c_int>(), WNOHANG);
-        }
 
         Ok(self.context.data.execution_result.clone())
     }
 
-    /// Forces the child process to exit. If the child has already exited, `Ok(())`
-    /// is returned.
+    /// Forces the child process to exit. If the child has already exited, `Ok(())` is returned.
     ///
     /// This is equivalent to sending a SIGKILL signal.
     ///
@@ -170,20 +164,21 @@ impl JailedChild<'_> {
     /// ```
     pub fn kill(&mut self) -> io::Result<()> {
         unsafe {
-            kill(self.context.data.pid.unwrap(), SIGKILL);
+            // The pid is guaranteed to still be valid, even if the child was already killed, as we own its PidFd in context::data::pid_fd
+            cvt(kill(self.context.data.pid.unwrap(), SIGKILL)).map(|_| ());
+            
+            unsafe {
+                waitpid(self.context.data.pid.unwrap() as id_t as pid_t, null_mut::<c_int>(), WNOHANG);
+            }
+            
+            Ok(())
         }
-        
-        Ok(())
     }
 }
 
 impl Drop for JailedChild<'_> {
     fn drop(&mut self) {
-        self.kill();
-
-        unsafe {
-            free(self.child_stack);
-        }
+        self.kill().expect("failed to kill child");
     }
 }
 
