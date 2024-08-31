@@ -2,7 +2,7 @@ use nix::errno::Errno;
 use std::io;
 use thiserror::Error;
 
-/// Error returned by [`PerfJail::spawn`]
+/// Error returned by [`Perfjail::spawn`]
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum SpawnError {}
 

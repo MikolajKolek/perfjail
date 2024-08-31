@@ -6,7 +6,7 @@
 
 A library for supervising the execution of programs in algorithmic competitions, inspired by [sio2jail](https://github.com/sio2project/sio2jail) - a tool used by the Polish Olympiad in Informatics
 
-PerfJail can be used for providing fair time and memory use measurements for problem solutions and for sandboxing
+Perfjail can be used for providing fair time and memory use measurements for problem solutions and for sandboxing
 
 Currently, the library doesn't include many of sio2jail's sandboxing features, as it was made primarily for fast testing of trusted programs, but as the project is further updated, those features may be reimplemented
 
@@ -17,4 +17,4 @@ Perfjail is licensed under the [MIT Licence](https://github.com/MikolajKolek/per
 
 Some of the project's code is based on sio2jail, which is also available under the MIT license
 
-The comments and basic structure for the `PerfJail` struct are based on [`std::process::Command`](https://doc.rust-lang.org/std/process/struct.Command.html) from the [Rust standard library](https://github.com/rust-lang/rust), which is also available under the MIT license
+The comments and basic structure for the `Perfjail` struct are based on [`std::process::Command`](https://doc.rust-lang.org/std/process/struct.Command.html) from the [Rust standard library](https://github.com/rust-lang/rust), which is also available under the MIT license

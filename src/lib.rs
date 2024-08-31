@@ -17,7 +17,7 @@ mod tests {
 
     use crate::process::execution_result::ExitReason::Exited;
     use crate::process::jail::Feature::PERF;
-    use crate::process::jail::PerfJail;
+    use crate::process::jail::Perfjail;
 
     #[test]
     fn time_measurement_test() {
@@ -26,7 +26,7 @@ mod tests {
         let input_file = File::open("tests/bud.in").unwrap();
         let output_file = File::create("tests/test_output.out").unwrap();
 
-        let child = PerfJail::new("tests/bud")
+        let child = Perfjail::new("tests/bud")
             .stdin(input_file.as_fd())
             .stdout(output_file.as_fd())
             .features(PERF)

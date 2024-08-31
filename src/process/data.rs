@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::listener::Listener;
 use crate::process::error::RunError;
 use crate::process::execution_result::ExecutionResult;
-use crate::process::jail::PerfJail;
+use crate::process::jail::Perfjail;
 
 #[derive(Debug)]
 pub(crate) struct ExecutionContext<'a> {
@@ -37,7 +37,7 @@ pub(crate) struct ExecutionData {
 }
 
 impl ExecutionSettings<'_> {
-    pub(crate) fn new(executor: PerfJail) -> ExecutionSettings {
+    pub(crate) fn new(executor: Perfjail) -> ExecutionSettings {
         ExecutionSettings {
             real_time_limit: executor.real_time_limit,
             instruction_count_limit: executor.instruction_count_limit,

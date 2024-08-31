@@ -18,12 +18,12 @@ use crate::util::{CHILD_STACK_SIZE, CYCLES_PER_SECOND};
 
 /// A builder based on [`std::process::Command`] used to configure and spawn perfjail processes.
 ///
-/// A default configuration can be generated using [`PerfJail::new`].
+/// A default configuration can be generated using [`Perfjail::new`].
 /// Additional builder methods allow the configuration to be changed (for example, by adding arguments) prior to spawning:
 /// ```
-/// use perfjail::process::PerfJail;
+/// use perfjail::process::Perfjail;
 ///
-/// let result = PerfJail::new("sleep")
+/// let result = Perfjail::new("sleep")
 ///         .arg("1")
 ///         .spawn()
 ///         .expect("failed to spawn child")
@@ -33,9 +33,9 @@ use crate::util::{CHILD_STACK_SIZE, CYCLES_PER_SECOND};
 /// let execution_time = result.real_time;
 /// ```
 ///
-/// Unlike [`std::process::Command`], `PerfJail` cannot be used to spawn multiple
-/// processes, as [`PerfJail::spawn`] consumes itself after it's called.
-pub struct PerfJail<'a> {
+/// Unlike [`std::process::Command`], `Perfjail` cannot be used to spawn multiple
+/// processes, as [`Perfjail::spawn`] consumes itself after it's called.
+pub struct Perfjail<'a> {
     pub(crate) real_time_limit: Option<Duration>,
     pub(crate) instruction_count_limit: Option<i64>,
     pub(crate) executable_path: CString,
@@ -52,7 +52,7 @@ pub struct PerfJail<'a> {
 pub enum Feature {
     /// Causes perfjail to measure the number of CPU instructions executed
     /// by the child program, allowing for much more accurate time measurement.
-    /// Makes the [`ExecutionResult`](crate::process::ExecutionResult) returned by [`PerfJail::run`]
+    /// Makes the [`ExecutionResult`](crate::process::ExecutionResult) returned by [`Perfjail::run`]
     /// include the [`instructions_used`](crate::process::execution_result::ExecutionResult::instructions_used)
     /// and [`measured_time`](crate::process::execution_result::ExecutionResult::measured_time) fields.
     PERF,
@@ -60,8 +60,8 @@ pub enum Feature {
 }
 
 #[allow(dead_code)]
-impl<'a> PerfJail<'a> {
-    /// Constructs a new `PerfJail` for launching the program at path `program`, with the following default configuration:
+impl<'a> Perfjail<'a> {
+    /// Constructs a new `Perfjail` for launching the program at path `program`, with the following default configuration:
     ///
     /// - No arguments to the program
     /// - Inherit the current process’s environment
@@ -80,16 +80,16 @@ impl<'a> PerfJail<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use perfjail::process::PerfJail;
+    /// use perfjail::process::Perfjail;
     ///
-    /// PerfJail::new("sh")
+    /// Perfjail::new("sh")
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run sh");
     /// ```
-    pub fn new<S: AsRef<OsStr>>(program: S) -> PerfJail<'a> {
-        PerfJail {
+    pub fn new<S: AsRef<OsStr>>(program: S) -> Perfjail<'a> {
+        Perfjail {
             real_time_limit: None,
             instruction_count_limit: None,
             executable_path: CString::new(program.as_ref().as_encoded_bytes())
@@ -109,7 +109,7 @@ impl<'a> PerfJail<'a> {
     /// Only one argument can be passed per use. So instead of:
     ///
     /// ```no_run
-    /// # perfjail::process::PerfJail::new("sh")
+    /// # perfjail::process::Perfjail::new("sh")
     /// .arg("-C /path/to/repo")
     /// # ;
     /// ```
@@ -117,13 +117,13 @@ impl<'a> PerfJail<'a> {
     /// usage would be:
     ///
     /// ```no_run
-    /// # perfjail::process::PerfJail::new("sh")
+    /// # perfjail::process::Perfjail::new("sh")
     /// .arg("-C")
     /// .arg("/path/to/repo")
     /// # ;
     /// ```
     ///
-    /// To pass multiple arguments see [`args`](PerfJail::args).
+    /// To pass multiple arguments see [`args`](Perfjail::args).
     ///
     /// Note that the argument is not passed through a shell, but given literally to the program.
     /// This means that shell syntax like quotes, escaped characters, word splitting, glob patterns,
@@ -134,9 +134,9 @@ impl<'a> PerfJail<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use perfjail::process::PerfJail;
+    /// use perfjail::process::Perfjail;
     ///
-    /// PerfJail::new("ls")
+    /// Perfjail::new("ls")
     ///     .arg("-l")
     ///     .arg("-a")
     ///     .spawn()
@@ -144,7 +144,7 @@ impl<'a> PerfJail<'a> {
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> PerfJail<'a> {
+    pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Perfjail<'a> {
         self.args.push(
             CString::new(arg.as_ref().as_encoded_bytes())
                 .expect("Failed to convert program arg to CString"),
@@ -154,7 +154,7 @@ impl<'a> PerfJail<'a> {
 
     /// Adds multiple arguments to pass to the program.
     ///
-    /// To pass a single argument see [`arg`](PerfJail::arg).
+    /// To pass a single argument see [`arg`](Perfjail::arg).
     ///
     /// Note that the arguments are not passed through a shell, but given
     /// literally to the program. This means that shell syntax like quotes,
@@ -166,16 +166,16 @@ impl<'a> PerfJail<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use perfjail::process::PerfJail;
+    /// use perfjail::process::Perfjail;
     ///
-    /// PerfJail::new("ls")
+    /// Perfjail::new("ls")
     ///     .args(["-l", "-a"])
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn args<I, S>(mut self, args: I) -> PerfJail<'a>
+    pub fn args<I, S>(mut self, args: I) -> Perfjail<'a>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -201,16 +201,16 @@ impl<'a> PerfJail<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use perfjail::process::PerfJail;
+    /// use perfjail::process::Perfjail;
     ///
-    /// PerfJail::new("ls")
+    /// Perfjail::new("ls")
     ///     .current_dir("/bin")
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn current_dir<P: AsRef<Path>>(mut self, dir: P) -> PerfJail<'a> {
+    pub fn current_dir<P: AsRef<Path>>(mut self, dir: P) -> Perfjail<'a> {
         self.working_dir = PathBuf::from(dir.as_ref().as_os_str());
         self
     }
@@ -224,20 +224,20 @@ impl<'a> PerfJail<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use perfjail::process::PerfJail;
+    /// use perfjail::process::Perfjail;
     /// use std::fs::File;
     /// use std::os::fd::AsFd;
     ///
     /// let file = File::open("/dev/null").unwrap();
     ///
-    /// PerfJail::new("ls")
+    /// Perfjail::new("ls")
     ///     .stdin(file.as_fd())
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn stdin<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> PerfJail<'a> {
+    pub fn stdin<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> Perfjail<'a> {
         self.stdin_fd = Some(fd.into());
         self
     }
@@ -251,20 +251,20 @@ impl<'a> PerfJail<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use perfjail::process::PerfJail;
+    /// use perfjail::process::Perfjail;
     /// use std::fs::File;
     /// use std::os::fd::AsFd;
     ///
     /// let file = File::open("/dev/null").unwrap();
     ///
-    /// PerfJail::new("ls")
+    /// Perfjail::new("ls")
     ///     .stdout(file.as_fd())
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn stdout<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> PerfJail<'a> {
+    pub fn stdout<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> Perfjail<'a> {
         self.stdout_fd = Some(fd.into());
         self
     }
@@ -278,20 +278,20 @@ impl<'a> PerfJail<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use perfjail::process::PerfJail;
+    /// use perfjail::process::Perfjail;
     /// use std::fs::File;
     /// use std::os::fd::AsFd;
     ///
     /// let file = File::open("/dev/null").unwrap();
     ///
-    /// PerfJail::new("ls")
+    /// Perfjail::new("ls")
     ///     .stderr(file.as_fd())
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn stderr<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> PerfJail<'a> {
+    pub fn stderr<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> Perfjail<'a> {
         self.stderr_fd = Some(fd.into());
         self
     }
@@ -307,16 +307,16 @@ impl<'a> PerfJail<'a> {
     /// ```
     /// use std::time::Duration;
     /// use perfjail::process::Feature::{PERF, SECCOMP};
-    /// use perfjail::process::PerfJail;
+    /// use perfjail::process::Perfjail;
     ///
-    /// PerfJail::new("ls")
+    /// Perfjail::new("ls")
     ///     .features(PERF | SECCOMP)
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn features<T: Into<EnumSet<Feature>>>(mut self, features: T) -> PerfJail<'a> {
+    pub fn features<T: Into<EnumSet<Feature>>>(mut self, features: T) -> Perfjail<'a> {
         self.features.insert_all(features.into());
         self
     }
@@ -332,9 +332,9 @@ impl<'a> PerfJail<'a> {
     /// ```
     /// use std::time::Duration;
     /// use perfjail::process::ExitStatus::TLE;
-    /// use perfjail::process::PerfJail;
+    /// use perfjail::process::Perfjail;
     ///
-    /// let result = PerfJail::new("sleep")
+    /// let result = Perfjail::new("sleep")
     ///     .arg("1")
     ///     .real_time_limit(Duration::from_secs_f64(0.5))
     ///     .spawn()
@@ -342,7 +342,7 @@ impl<'a> PerfJail<'a> {
     ///     .run()
     ///     .expect("failed to run sleep");
     /// ```
-    pub fn real_time_limit(mut self, limit: Duration) -> PerfJail<'a> {
+    pub fn real_time_limit(mut self, limit: Duration) -> Perfjail<'a> {
         self.real_time_limit = Some(limit);
         self
     }
@@ -351,7 +351,7 @@ impl<'a> PerfJail<'a> {
     /// before it is killed and [`ExitStatus::TLE`](crate::process::ExitStatus::TLE) is
     /// returned as the exit status.
     ///
-    /// Setting a measured time limit also automatically enables the [`PERF`](PERF) feature flag, working the same way as if it was added using the [`features`](PerfJail::features) method.
+    /// Setting a measured time limit also automatically enables the [`PERF`](PERF) feature flag, working the same way as if it was added using the [`features`](Perfjail::features) method.
     ///
     /// # Examples
     ///
@@ -360,9 +360,9 @@ impl<'a> PerfJail<'a> {
     /// ```
     /// use std::time::Duration;
     /// use perfjail::process::ExitStatus::TLE;
-    /// use perfjail::process::PerfJail;
+    /// use perfjail::process::Perfjail;
     ///
-    /// let result = PerfJail::new("sleep")
+    /// let result = Perfjail::new("sleep")
     ///     .arg("1")
     ///     .measured_time_limit(Duration::from_secs_f64(0.5))
     ///     .spawn()
@@ -370,7 +370,7 @@ impl<'a> PerfJail<'a> {
     ///     .run()
     ///     .expect("failed to run sleep");
     /// ```
-    pub fn measured_time_limit(mut self, limit: Duration) -> PerfJail<'a> {
+    pub fn measured_time_limit(mut self, limit: Duration) -> Perfjail<'a> {
         self.instruction_count_limit =
             Some((limit.as_millis() * ((CYCLES_PER_SECOND / 1_000) as u128)) as i64);
         self = self.features(PERF);
@@ -388,9 +388,9 @@ impl<'a> PerfJail<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use perfjail::process::PerfJail;
+    /// use perfjail::process::Perfjail;
     ///
-    /// PerfJail::new("ls")
+    /// Perfjail::new("ls")
     ///     .spawn()
     ///     .expect("failed to spawn child process");
     /// ```

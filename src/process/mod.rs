@@ -11,7 +11,7 @@ pub use self::execution_result::ExecutionResult;
 pub use self::execution_result::ExitReason;
 pub use self::execution_result::ExitStatus;
 pub use self::jail::Feature;
-pub use self::jail::PerfJail;
+pub use self::jail::Perfjail;
 
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) enum ExecuteAction {

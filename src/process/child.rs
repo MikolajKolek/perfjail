@@ -1,5 +1,6 @@
 use std::cmp::min;
 use std::ffi::{c_int, c_void};
+use std::io;
 use std::mem::zeroed;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::PathBuf;
@@ -17,6 +18,35 @@ use crate::process::error::RunError;
 use crate::process::execution_result::{ExecutionResult, ExitReason};
 use crate::process::ExecuteAction::{Continue, Kill};
 
+/// Representation of a perfjail child process that's waiting to be run, running or exited.
+///
+/// This structure is used to represent and manage child processes. A child
+/// process is created via the [`Perfjail`](crate::process::Perfjail) struct, which configures the
+/// spawning process and can itself be constructed using a builder-style
+/// interface.
+///
+/// If the `JailedChild` is dropped, the child process is terminated.
+///
+/// Calling [`run`](JailedChild::run) will make
+/// the parent process wait until the child has exited before
+/// continuing.
+///
+/// # Examples
+///
+/// ```should_panic
+/// use perfjail::process::ExitReason::Exited;
+/// use perfjail::process::ExitStatus::OK;
+/// use perfjail::process::Perfjail;
+///
+/// let mut child = Perfjail::new("/bin/cat")
+///     .arg("file.txt")
+///     .spawn()
+///     .expect("failed to execute child");
+///
+/// let ecode = child.run().expect("failed to wait on child");
+///
+/// assert!(matches!(ecode.exit_reason, Exited { exit_status: 0 }));
+/// ```
 pub struct JailedChild<'a> {
     context: Box<ExecutionContext<'a>>,
     child_stack: *mut c_void,
@@ -51,7 +81,7 @@ impl JailedChild<'_> {
             });
 
             if action == Kill {
-                self.kill_child();
+                self.kill();
             }
 
             let poll_pid_fd = PollFd::new(
@@ -119,16 +149,37 @@ impl JailedChild<'_> {
         Ok(self.context.data.execution_result.clone())
     }
 
-    fn kill_child(&mut self) {
+    /// Forces the child process to exit. If the child has already exited, `Ok(())`
+    /// is returned.
+    ///
+    /// This is equivalent to sending a SIGKILL signal.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```no_run
+    /// use perfjail::process::Perfjail;
+    ///
+    /// let mut jail = Perfjail::new("yes");
+    /// if let Ok(mut child) = jail.spawn() {
+    ///     child.kill().expect("command couldn't be killed");
+    /// } else {
+    ///     println!("yes command didn't start");
+    /// }
+    /// ```
+    pub fn kill(&mut self) -> io::Result<()> {
         unsafe {
             kill(self.context.data.pid.unwrap(), SIGKILL);
         }
+        
+        Ok(())
     }
 }
 
 impl Drop for JailedChild<'_> {
     fn drop(&mut self) {
-        self.kill_child();
+        self.kill();
 
         unsafe {
             free(self.child_stack);
