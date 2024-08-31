@@ -6,7 +6,7 @@ use thiserror::Error;
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum SpawnError {}
 
-/// Error returned by [`JailedChild::run`]
+/// Error returned by [`JailedChild::run`].
 #[derive(Error, Debug)]
 pub enum RunError {
     /// Child errno
