@@ -111,8 +111,12 @@ impl JailedChild<'_> {
             let poll_result = poll(
                 &mut poll_fds,
                 PollTimeout::try_from(timeout.unwrap_or(-1)).unwrap(),
-            )
-            .unwrap();
+            );
+            if poll_result.is_err() && poll_result.unwrap_err() == nix::errno::Errno::EINTR {
+                continue;
+            }
+            
+            let poll_result = poll_result.unwrap();
             if poll_result == 0 {
                 // This means that one of the listeners' timeouts has finished, and we need to call all the on_wakeup functions again
                 continue;
