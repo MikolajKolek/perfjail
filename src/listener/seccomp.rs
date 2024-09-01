@@ -15,20 +15,20 @@ impl SeccompListener {
 impl Listener for SeccompListener {
     fn on_post_fork_child(
         &mut self,
-        settings: &ExecutionSettings,
-        data: &ExecutionData,
+        _: &ExecutionSettings,
+        _: &ExecutionData,
     ) -> Result<(), RunError> {
         Ok(())
     }
 
-    fn on_post_fork_parent(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) {}
+    fn on_post_fork_parent(&mut self, _: &ExecutionSettings, _: &mut ExecutionData) {}
 
-    fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) {}
+    fn on_post_execute(&mut self, _: &ExecutionSettings, _: &mut ExecutionData) {}
 
     fn on_wakeup(
         &mut self,
-        settings: &ExecutionSettings,
-        data: &mut ExecutionData,
+        _: &ExecutionSettings,
+        _: &mut ExecutionData,
     ) -> (ExecuteAction, Option<i32>) {
         (ExecuteAction::Continue, None)
     }

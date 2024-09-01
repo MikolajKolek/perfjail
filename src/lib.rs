@@ -34,7 +34,7 @@ mod tests {
             .spawn()
             .unwrap();
         let result = child.run().unwrap();
-        
+
         println!("Exit result: {:?}", result);
         let Exited {
             exit_status: status,

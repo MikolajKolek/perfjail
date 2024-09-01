@@ -1,3 +1,10 @@
+use cvt::cvt;
+use libc::{
+    id_t, kill, pid_t, siginfo_t, waitid, waitpid, CLD_DUMPED, CLD_EXITED, CLD_KILLED, P_PID,
+    SIGKILL, WEXITED, WNOHANG, WNOWAIT, WSTOPPED,
+};
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+use nix::unistd::{chdir, close, dup2, execvp};
 use std::any::Any;
 use std::cmp::min;
 use std::ffi::{c_int, c_void};
@@ -6,10 +13,6 @@ use std::mem::zeroed;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::PathBuf;
 use std::ptr::null_mut;
-use cvt::cvt;
-use libc::{id_t, kill, pid_t, siginfo_t, waitid, waitpid, CLD_DUMPED, CLD_EXITED, CLD_KILLED, P_PID, SIGKILL, WEXITED, WNOHANG, WNOWAIT, WSTOPPED};
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
-use nix::unistd::{chdir, close, dup2, execvp};
 
 use crate::process::data::ExecutionContext;
 use crate::process::error::RunError;
@@ -41,9 +44,9 @@ use crate::process::ExecuteAction::{Continue, Kill};
 ///     .spawn()
 ///     .expect("failed to execute child");
 ///
-/// let ecode = child.run().expect("failed to wait on child");
+/// let result = child.run().expect("failed to wait on child");
 ///
-/// assert!(matches!(ecode.exit_reason, Exited { exit_status: 0 }));
+/// assert!(matches!(result.exit_reason, Exited { exit_status: 0 }));
 /// ```
 pub struct JailedChild<'a> {
     context: Box<ExecutionContext<'a>>,
@@ -58,6 +61,24 @@ impl JailedChild<'_> {
         }
     }
 
+    /// Runs the child process and waits for it to exit completely, returning the result that it
+    /// exited with. After the function returns, the [`JailedChild`] object is consumed.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use perfjail::process::Perfjail;
+    ///
+    /// let mut jail = Perfjail::new("ls");
+    /// if let Ok(mut child) = jail.spawn() {
+    ///     child.run().expect("perfjail wasn't running");
+    ///     println!("Perfjail has finished its execution!");
+    /// } else {
+    ///     println!("ls command didn't start");
+    /// }
+    /// ```
     pub fn run(mut self) -> Result<ExecutionResult, RunError> {
         self.context.listeners.iter_mut().for_each(|listener| {
             listener.on_post_fork_parent(&self.context.settings, &mut self.context.data)
@@ -79,7 +100,7 @@ impl JailedChild<'_> {
             });
 
             if action == Kill {
-                self.kill();
+                self.kill()?
             }
 
             let poll_pid_fd = PollFd::new(
@@ -101,7 +122,7 @@ impl JailedChild<'_> {
             unsafe {
                 _ = waitid(
                     P_PID,
-                    (&self).context.data.pid.unwrap() as id_t,
+                    self.context.data.pid.unwrap() as id_t,
                     &mut wait_info as *mut siginfo_t,
                     WEXITED | WSTOPPED | WNOWAIT,
                 );
@@ -157,21 +178,15 @@ impl JailedChild<'_> {
     ///
     /// let mut jail = Perfjail::new("yes");
     /// if let Ok(mut child) = jail.spawn() {
-    ///     child.kill().expect("command couldn't be killed");
+    ///     child.kill().expect("perfjail couldn't be killed");
     /// } else {
     ///     println!("yes command didn't start");
     /// }
     /// ```
     pub fn kill(&mut self) -> io::Result<()> {
         unsafe {
-            // The pid is guaranteed to still be valid, even if the child was already killed, as we own its PidFd in context::data::pid_fd
-            cvt(kill(self.context.data.pid.unwrap(), SIGKILL)).map(|_| ());
-            
-            unsafe {
-                waitpid(self.context.data.pid.unwrap() as id_t as pid_t, null_mut::<c_int>(), WNOHANG);
-            }
-            
-            Ok(())
+            // The pid is guaranteed to still be valid, even if the child was already killed, as the child process hasn't yet been waited on, and won't be until it's dropped
+            cvt(kill(self.context.data.pid.unwrap(), SIGKILL)).map(|_| ())
         }
     }
 }
@@ -179,6 +194,14 @@ impl JailedChild<'_> {
 impl Drop for JailedChild<'_> {
     fn drop(&mut self) {
         self.kill().expect("failed to kill child");
+
+        unsafe {
+            waitpid(
+                self.context.data.pid.unwrap() as id_t as pid_t,
+                null_mut::<c_int>(),
+                WNOHANG,
+            );
+        }
     }
 }
 

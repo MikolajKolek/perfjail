@@ -2,10 +2,18 @@ use std::time::Duration;
 
 use crate::util::CYCLES_PER_SECOND;
 
+/// Describes the result of a perfjail child process execution after it has terminated.
+///
+/// This struct is used to represent the exit status, exit reason and other information
+/// regarding the termination of a child process. Child processes are created via
+/// the [`Perfjail`](crate::process::Perfjail) struct and their exit status is exposed through the
+/// [`run`](crate::process::JailedChild::run) method of a [`JailedChild`](crate::process::JailedChild) process.
 #[readonly::make]
 #[derive(Clone, Debug)]
 pub struct ExecutionResult {
+    /// Information on whether there were errors or rules violations during the running of the child program.
     pub exit_status: ExitStatus,
+    /// The reason the child exited (whether it exited by itself or was killed by a signal).
     pub exit_reason: ExitReason,
     /// The number of CPU instructions executed by the child program.
     ///
@@ -23,23 +31,36 @@ pub struct ExecutionResult {
     pub system_time: Duration,
 }
 
+/// A list of possible rules violations and run errors that can occur during the running of the child program.
+///
+/// All the variants besides [`OK`](ExitStatus::OK) contain additional information about the error in a string, which can be easily accessed through [`get_exit_status_comment`](ExitStatus::get_exit_status_comment).
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExitStatus {
+    /// OK - the child process returned without errors or sandbox violations.
     OK,
+    /// Runtime error - the child process encountered a runtime error (for example, a segmentation fault).   
     RE(String),
+    /// Rules violation - a sandboxing rule was violated (for example, a thread was created when the thread limit was zero).
     RV(String),
+    /// Time limit exceeded - a time limit set in the [`Perfjail`](crate::process::Perfjail) builder was exceeded.
     TLE(String),
+    /// Memory limit exceeded - the memory limit set in the [`Perfjail`](crate::process::Perfjail) builder was exceeded.
     MLE(String),
+    /// Output limit exceeded - the output limit set in the [`Perfjail`](crate::process::Perfjail) builder was exceeded.
     OLE(String),
 }
 
+/// Contains information whether the child process returned or was killed.
 #[derive(Clone, Copy, Debug)]
 pub enum ExitReason {
+    /// The child exited with an exit status
     Exited { exit_status: i32 },
+    /// The child was killed by a signal
     Killed { signal: i32 },
 }
 
 impl ExitStatus {
+    /// Returns the comment attached to the exit status, or an empty string if the exit status was [`OK`](ExitStatus::OK).
     pub fn get_exit_status_comment(&self) -> String {
         match self {
             ExitStatus::OK => String::new(),
