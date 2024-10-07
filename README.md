@@ -10,7 +10,7 @@ Perfjail can be used for providing fair time and memory use measurements for pro
 
 Currently, the library doesn't include many of sio2jail's sandboxing features, as it was made primarily for fast testing of trusted programs, but as the project is further updated, those features may be reimplemented
 
-The project is also currently very much a work-in-progress, with messy, undocumented code without error handling, but all that will change before the first full release
+The project is also currently very much a work in progress (however, the main functionality does work!), with code that at times can be messy, undocumented and lack error handling, but all that will change before the first full release
 
 # License
 Perfjail is licensed under the [MIT Licence](https://github.com/MikolajKolek/perfjail/blob/master/LICENSE) 

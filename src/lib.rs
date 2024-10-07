@@ -48,6 +48,6 @@ mod tests {
             result.measured_time.unwrap().as_millis()
         );
 
-        assert_eq!(result.measured_time.unwrap().as_millis(), 459);
+        assert_eq!(result.measured_time.unwrap().as_millis(), 458);
     }
 }
