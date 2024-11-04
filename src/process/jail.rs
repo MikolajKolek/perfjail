@@ -11,19 +11,19 @@ use libc::{clone, malloc, CLONE_PIDFD, CLONE_VM, SIGCHLD};
 use crate::listener::perf::PerfListener;
 use crate::listener::seccomp::SeccompListener;
 use crate::listener::Listener;
-use crate::process::child::{execute_child, Sio2jailChild};
+use crate::process::child::{execute_child, JailedChild};
 use crate::process::data::{ExecutionContext, ExecutionData, ExecutionSettings};
-use crate::process::executor::Feature::PERF;
+use crate::process::jail::Feature::PERF;
 use crate::util::{CHILD_STACK_SIZE, CYCLES_PER_SECOND};
 
-/// A builder based on [`std::process::Command`] used to configure and spawn libsio2jail processes.
+/// A builder based on [`std::process::Command`] used to configure and spawn perfjail processes.
 ///
-/// A default configuration can be generated using [`Sio2jailExecutor::new`].
+/// A default configuration can be generated using [`PerfJail::new`].
 /// Additional builder methods allow the configuration to be changed (for example, by adding arguments) prior to spawning:
 /// ```
-/// use libsio2jail::process::Sio2jailExecutor;
+/// use perfjail::process::PerfJail;
 ///
-/// let result = Sio2jailExecutor::new("sleep")
+/// let result = PerfJail::new("sleep")
 ///         .arg("1")
 ///         .spawn()
 ///         .expect("failed to spawn child")
@@ -33,9 +33,9 @@ use crate::util::{CHILD_STACK_SIZE, CYCLES_PER_SECOND};
 /// let execution_time = result.real_time;
 /// ```
 ///
-/// Unlike [`std::process::Command`], `Sio2jailExecutor` cannot be used to spawn multiple
-/// processes, as [`Sio2jailExecutor::spawn`] consumes itself after it's called.
-pub struct Sio2jailExecutor<'a> {
+/// Unlike [`std::process::Command`], `PerfJail` cannot be used to spawn multiple
+/// processes, as [`PerfJail::spawn`] consumes itself after it's called.
+pub struct PerfJail<'a> {
     pub(crate) real_time_limit: Option<Duration>,
     pub(crate) instruction_count_limit: Option<i64>,
     pub(crate) executable_path: CString,
@@ -50,18 +50,18 @@ pub struct Sio2jailExecutor<'a> {
 /// Feature flags dictating sandboxing and performance measurement options for the child process.
 #[derive(EnumSetType, Debug)]
 pub enum Feature {
-    /// Causes libsio2jail to measure the number of CPU instructions executed
+    /// Causes perfjail to measure the number of CPU instructions executed
     /// by the child program, allowing for much more accurate time measurement.
-    /// Causes the [`ExecutionResult`](crate::process::ExecutionResult) returned by [`Sio2jailChild::run`]
-    /// to include the [`instructions_used`](crate::process::execution_result::ExecutionResult::instructions_used)
+    /// Makes the [`ExecutionResult`](crate::process::ExecutionResult) returned by [`PerfJail::run`]
+    /// include the [`instructions_used`](crate::process::execution_result::ExecutionResult::instructions_used)
     /// and [`measured_time`](crate::process::execution_result::ExecutionResult::measured_time) fields.
     PERF,
     SECCOMP,
 }
 
 #[allow(dead_code)]
-impl<'a> Sio2jailExecutor<'a> {
-    /// Constructs a new `Sio2jailExecutor` for launching the program at path `program`, with the following default configuration:
+impl<'a> PerfJail<'a> {
+    /// Constructs a new `PerfJail` for launching the program at path `program`, with the following default configuration:
     ///
     /// - No arguments to the program
     /// - Inherit the current process’s environment
@@ -80,16 +80,16 @@ impl<'a> Sio2jailExecutor<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use libsio2jail::process::Sio2jailExecutor;
+    /// use perfjail::process::PerfJail;
     ///
-    /// Sio2jailExecutor::new("sh")
+    /// PerfJail::new("sh")
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run sh");
     /// ```
-    pub fn new<S: AsRef<OsStr>>(program: S) -> Sio2jailExecutor<'a> {
-        Sio2jailExecutor {
+    pub fn new<S: AsRef<OsStr>>(program: S) -> PerfJail<'a> {
+        PerfJail {
             real_time_limit: None,
             instruction_count_limit: None,
             executable_path: CString::new(program.as_ref().as_encoded_bytes())
@@ -109,7 +109,7 @@ impl<'a> Sio2jailExecutor<'a> {
     /// Only one argument can be passed per use. So instead of:
     ///
     /// ```no_run
-    /// # libsio2jail::process::Sio2jailExecutor::new("sh")
+    /// # perfjail::process::PerfJail::new("sh")
     /// .arg("-C /path/to/repo")
     /// # ;
     /// ```
@@ -117,13 +117,13 @@ impl<'a> Sio2jailExecutor<'a> {
     /// usage would be:
     ///
     /// ```no_run
-    /// # libsio2jail::process::Sio2jailExecutor::new("sh")
+    /// # perfjail::process::PerfJail::new("sh")
     /// .arg("-C")
     /// .arg("/path/to/repo")
     /// # ;
     /// ```
     ///
-    /// To pass multiple arguments see [`args`](Sio2jailExecutor::args).
+    /// To pass multiple arguments see [`args`](PerfJail::args).
     ///
     /// Note that the argument is not passed through a shell, but given literally to the program.
     /// This means that shell syntax like quotes, escaped characters, word splitting, glob patterns,
@@ -134,9 +134,9 @@ impl<'a> Sio2jailExecutor<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use libsio2jail::process::Sio2jailExecutor;
+    /// use perfjail::process::PerfJail;
     ///
-    /// Sio2jailExecutor::new("ls")
+    /// PerfJail::new("ls")
     ///     .arg("-l")
     ///     .arg("-a")
     ///     .spawn()
@@ -144,7 +144,7 @@ impl<'a> Sio2jailExecutor<'a> {
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Sio2jailExecutor<'a> {
+    pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> PerfJail<'a> {
         self.args.push(
             CString::new(arg.as_ref().as_encoded_bytes())
                 .expect("Failed to convert program arg to CString"),
@@ -154,7 +154,7 @@ impl<'a> Sio2jailExecutor<'a> {
 
     /// Adds multiple arguments to pass to the program.
     ///
-    /// To pass a single argument see [`arg`](Sio2jailExecutor::arg).
+    /// To pass a single argument see [`arg`](PerfJail::arg).
     ///
     /// Note that the arguments are not passed through a shell, but given
     /// literally to the program. This means that shell syntax like quotes,
@@ -166,16 +166,16 @@ impl<'a> Sio2jailExecutor<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use libsio2jail::process::Sio2jailExecutor;
+    /// use perfjail::process::PerfJail;
     ///
-    /// Sio2jailExecutor::new("ls")
+    /// PerfJail::new("ls")
     ///     .args(["-l", "-a"])
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn args<I, S>(mut self, args: I) -> Sio2jailExecutor<'a>
+    pub fn args<I, S>(mut self, args: I) -> PerfJail<'a>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -201,16 +201,16 @@ impl<'a> Sio2jailExecutor<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use libsio2jail::process::Sio2jailExecutor;
+    /// use perfjail::process::PerfJail;
     ///
-    /// Sio2jailExecutor::new("ls")
+    /// PerfJail::new("ls")
     ///     .current_dir("/bin")
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn current_dir<P: AsRef<Path>>(mut self, dir: P) -> Sio2jailExecutor<'a> {
+    pub fn current_dir<P: AsRef<Path>>(mut self, dir: P) -> PerfJail<'a> {
         self.working_dir = PathBuf::from(dir.as_ref().as_os_str());
         self
     }
@@ -224,20 +224,20 @@ impl<'a> Sio2jailExecutor<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use libsio2jail::process::Sio2jailExecutor;
+    /// use perfjail::process::PerfJail;
     /// use std::fs::File;
     /// use std::os::fd::AsFd;
     ///
     /// let file = File::open("/dev/null").unwrap();
     ///
-    /// Sio2jailExecutor::new("ls")
+    /// PerfJail::new("ls")
     ///     .stdin(file.as_fd())
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn stdin<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> Sio2jailExecutor<'a> {
+    pub fn stdin<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> PerfJail<'a> {
         self.stdin_fd = Some(fd.into());
         self
     }
@@ -251,20 +251,20 @@ impl<'a> Sio2jailExecutor<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use libsio2jail::process::Sio2jailExecutor;
+    /// use perfjail::process::PerfJail;
     /// use std::fs::File;
     /// use std::os::fd::AsFd;
     ///
     /// let file = File::open("/dev/null").unwrap();
     ///
-    /// Sio2jailExecutor::new("ls")
+    /// PerfJail::new("ls")
     ///     .stdout(file.as_fd())
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn stdout<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> Sio2jailExecutor<'a> {
+    pub fn stdout<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> PerfJail<'a> {
         self.stdout_fd = Some(fd.into());
         self
     }
@@ -278,20 +278,20 @@ impl<'a> Sio2jailExecutor<'a> {
     /// Basic usage:
     ///
     /// ```
-    /// use libsio2jail::process::Sio2jailExecutor;
+    /// use perfjail::process::PerfJail;
     /// use std::fs::File;
     /// use std::os::fd::AsFd;
     ///
     /// let file = File::open("/dev/null").unwrap();
     ///
-    /// Sio2jailExecutor::new("ls")
+    /// PerfJail::new("ls")
     ///     .stderr(file.as_fd())
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn stderr<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> Sio2jailExecutor<'a> {
+    pub fn stderr<T: Into<BorrowedFd<'a>>>(mut self, fd: T) -> PerfJail<'a> {
         self.stderr_fd = Some(fd.into());
         self
     }
@@ -306,17 +306,17 @@ impl<'a> Sio2jailExecutor<'a> {
     ///
     /// ```
     /// use std::time::Duration;
-    /// use libsio2jail::process::Feature::{PERF, SECCOMP};
-    /// use libsio2jail::process::Sio2jailExecutor;
+    /// use perfjail::process::Feature::{PERF, SECCOMP};
+    /// use perfjail::process::PerfJail;
     ///
-    /// Sio2jailExecutor::new("ls")
+    /// PerfJail::new("ls")
     ///     .features(PERF | SECCOMP)
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run ls");
     /// ```
-    pub fn features<T: Into<EnumSet<Feature>>>(mut self, features: T) -> Sio2jailExecutor<'a> {
+    pub fn features<T: Into<EnumSet<Feature>>>(mut self, features: T) -> PerfJail<'a> {
         self.features.insert_all(features.into());
         self
     }
@@ -331,10 +331,10 @@ impl<'a> Sio2jailExecutor<'a> {
     ///
     /// ```
     /// use std::time::Duration;
-    /// use libsio2jail::process::ExitStatus::TLE;
-    /// use libsio2jail::process::Sio2jailExecutor;
+    /// use perfjail::process::ExitStatus::TLE;
+    /// use perfjail::process::PerfJail;
     ///
-    /// let result = Sio2jailExecutor::new("sleep")
+    /// let result = PerfJail::new("sleep")
     ///     .arg("1")
     ///     .real_time_limit(Duration::from_secs_f64(0.5))
     ///     .spawn()
@@ -342,7 +342,7 @@ impl<'a> Sio2jailExecutor<'a> {
     ///     .run()
     ///     .expect("failed to run sleep");
     /// ```
-    pub fn real_time_limit(mut self, limit: Duration) -> Sio2jailExecutor<'a> {
+    pub fn real_time_limit(mut self, limit: Duration) -> PerfJail<'a> {
         self.real_time_limit = Some(limit);
         self
     }
@@ -351,7 +351,7 @@ impl<'a> Sio2jailExecutor<'a> {
     /// before it is killed and [`ExitStatus::TLE`](crate::process::ExitStatus::TLE) is
     /// returned as the exit status.
     ///
-    /// Setting a measured time limit also automatically enables the [`PERF`](PERF) feature flag, working the same way as if it was added using the [`features`](Sio2jailExecutor::features) method.
+    /// Setting a measured time limit also automatically enables the [`PERF`](PERF) feature flag, working the same way as if it was added using the [`features`](PerfJail::features) method.
     ///
     /// # Examples
     ///
@@ -359,10 +359,10 @@ impl<'a> Sio2jailExecutor<'a> {
     ///
     /// ```
     /// use std::time::Duration;
-    /// use libsio2jail::process::ExitStatus::TLE;
-    /// use libsio2jail::process::Sio2jailExecutor;
+    /// use perfjail::process::ExitStatus::TLE;
+    /// use perfjail::process::PerfJail;
     ///
-    /// let result = Sio2jailExecutor::new("sleep")
+    /// let result = PerfJail::new("sleep")
     ///     .arg("1")
     ///     .measured_time_limit(Duration::from_secs_f64(0.5))
     ///     .spawn()
@@ -370,14 +370,31 @@ impl<'a> Sio2jailExecutor<'a> {
     ///     .run()
     ///     .expect("failed to run sleep");
     /// ```
-    pub fn measured_time_limit(mut self, limit: Duration) -> Sio2jailExecutor<'a> {
+    pub fn measured_time_limit(mut self, limit: Duration) -> PerfJail<'a> {
         self.instruction_count_limit =
             Some((limit.as_millis() * ((CYCLES_PER_SECOND / 1_000) as u128)) as i64);
         self = self.features(PERF);
         self
     }
 
-    pub fn spawn(self) -> io::Result<Sio2jailChild<'a>> {
+    /// Spawns the child process used for the execution of the program, returning a handle to it.
+    ///
+    /// Note that this does not start the execution of the program and instead just spawns the child process preparing for its execution, waiting for it to start until [`JailedChild::run`](JailedChild::run) is run.
+    ///
+    /// By default, stdin, stdout and stderr are inherited from the parent.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use perfjail::process::PerfJail;
+    ///
+    /// PerfJail::new("ls")
+    ///     .spawn()
+    ///     .expect("failed to spawn child process");
+    /// ```
+    pub fn spawn(self) -> io::Result<JailedChild<'a>> {
         let listeners = self
             .features
             .iter()
@@ -411,6 +428,6 @@ impl<'a> Sio2jailExecutor<'a> {
             context.data.pid_fd = Some(OwnedFd::from_raw_fd(pid_fd));
         }
 
-        Ok(Sio2jailChild::new(context, child_stack))
+        Ok(JailedChild::new(context, child_stack))
     }
 }

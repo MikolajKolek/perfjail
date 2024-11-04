@@ -51,15 +51,15 @@ impl Listener for PerfListener {
         _: &ExecutionSettings,
         _: &ExecutionData,
     ) -> Result<(), RunError> {
-       unsafe {
-           let wait_result = pthread_barrier_wait(&mut self.barrier as *mut pthread_barrier_t);
+        unsafe {
+            let wait_result = pthread_barrier_wait(&mut self.barrier as *mut pthread_barrier_t);
 
-           if wait_result != 0 && wait_result != libc::PTHREAD_BARRIER_SERIAL_THREAD {
-               Err(IOError(std::io::Error::last_os_error()))
-           } else {
-               Ok(())
-           }
-       }
+            if wait_result != 0 && wait_result != libc::PTHREAD_BARRIER_SERIAL_THREAD {
+                Err(IOError(std::io::Error::last_os_error()))
+            } else {
+                Ok(())
+            }
+        }
     }
 
     fn on_post_fork_parent(&mut self, _settings: &ExecutionSettings, data: &mut ExecutionData) {

@@ -17,14 +17,14 @@ use crate::process::error::RunError;
 use crate::process::execution_result::{ExecutionResult, ExitReason};
 use crate::process::ExecuteAction::{Continue, Kill};
 
-pub struct Sio2jailChild<'a> {
+pub struct JailedChild<'a> {
     context: Box<ExecutionContext<'a>>,
     child_stack: *mut c_void,
 }
 
-impl Sio2jailChild<'_> {
-    pub(crate) fn new(context: Box<ExecutionContext>, child_stack: *mut c_void) -> Sio2jailChild {
-        Sio2jailChild {
+impl JailedChild<'_> {
+    pub(crate) fn new(context: Box<ExecutionContext>, child_stack: *mut c_void) -> JailedChild {
+        JailedChild {
             context,
             child_stack,
         }
@@ -126,7 +126,7 @@ impl Sio2jailChild<'_> {
     }
 }
 
-impl Drop for Sio2jailChild<'_> {
+impl Drop for JailedChild<'_> {
     fn drop(&mut self) {
         self.kill_child();
 

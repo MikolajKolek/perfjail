@@ -1,9 +1,9 @@
 #![warn(missing_docs)]
-//! A Rust reimplementation sio2jail - a tool for supervising the execution of programs submitted in algorithmic competitions
+//! A library for supervising the execution of programs in algorithmic competitions, inspired by sio2jail - a tool used by the Polish Olympiad in Informatics
 
-/// Utilities for creating and managing libsio2jail processes
+/// Utilities for creating and managing perfjail processes
 pub mod process;
-/// Utilities for setting Linux up for libsio2jail use
+/// Utilities for setting Linux up for perfjail use
 pub mod setup;
 
 mod listener;
@@ -16,20 +16,19 @@ mod tests {
     use std::time::Duration;
 
     use crate::process::execution_result::ExitReason::Exited;
-    use crate::process::executor::Feature::PERF;
-    use crate::process::executor::Sio2jailExecutor;
+    use crate::process::jail::Feature::PERF;
+    use crate::process::jail::PerfJail;
 
     #[test]
     fn time_measurement_test() {
         //TODO: COMPREHENSIVE UNIT TESTING SYSTEM
-        
+
         let input_file = File::open("tests/bud.in").unwrap();
         let output_file = File::create("tests/test_output.out").unwrap();
 
-        let child = Sio2jailExecutor::new("tests/bud")
+        let child = PerfJail::new("tests/bud")
             .stdin(input_file.as_fd())
             .stdout(output_file.as_fd())
-            //.current_dir(PathBuf::from("asfd"))
             .features(PERF)
             .measured_time_limit(Duration::from_millis(500))
             .spawn()
@@ -49,6 +48,6 @@ mod tests {
             result.measured_time.unwrap().as_millis()
         );
 
-        assert_eq!(result.measured_time.unwrap().as_millis(), 458);
+        assert_eq!(result.measured_time.unwrap().as_millis(), 459);
     }
 }

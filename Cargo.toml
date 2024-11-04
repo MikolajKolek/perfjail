@@ -1,8 +1,10 @@
 [package]
-name = "libsio2jail"
-description = "A Rust reimplementation sio2jail - a tool for supervising execution of programs submitted in algorithmic competitions"
-repository = "https://github.com/MikolajKolek/libsio2jail"
-homepage = "https://github.com/MikolajKolek/libsio2jail"
+name = "perfjail"
+description = "A library for supervising the execution of programs in algorithmic competitions, inspired by sio2jail - a tool used by the Polish Olympiad in Informatics"
+repository = "https://github.com/MikolajKolek/perfjail"
+homepage = "https://github.com/MikolajKolek/perfjail"
+documentation = "https://docs.rs/perfjail"
+categories = ["virtualization"]
 authors = ["Mikołaj Kołek"]
 readme = "README.md"
 license = "MIT"

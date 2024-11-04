@@ -6,32 +6,32 @@ use crate::setup::PerfSetupError::{AuthenticationFailed, PkexecNotFound, SetupCo
 use sysctl::{Sysctl, SysctlError};
 use thiserror::Error;
 
-/// Error returned by [`set_perf_up_temporarily`] and [`set_perf_up_permanently`]
+/// Error returned by [`set_perf_up_temporarily`] and [`set_perf_up_permanently`].
 #[derive(Error, Debug)]
 pub enum PerfSetupError {
-    /// Pkexec was not found
+    /// Pkexec was not found.
     #[error("Pkexec was not found")]
     PkexecNotFound,
-    /// Failed to elevate permissions using pkexec
+    /// Failed to elevate permissions using pkexec.
     #[error("Failed to elevate permissions using pkexec")]
     AuthenticationFailed,
-    /// Failed to run setup commands
+    /// Failed to run setup commands.
     #[error("Failed to run setup commands: {0}")]
     SetupCommandFail(String),
-    /// IO error
+    /// IO error.
     #[error("IO Error: {0}")]
     IoError(#[from] io::Error),
 }
 
-/// Checks if the Linux kernel parameters required for running libsio2jail with the [PERF](crate::process::executor::Feature::PERF) feature are set, returning true if they are and false if they aren't
+/// Checks if the Linux kernel parameters required for running perfjail with the [`PERF`](crate::process::jail::Feature::PERF) feature are set, returning true if they are and false if they aren't.
 /// ```no_run
-/// use libsio2jail::setup::test_perf;
+/// use perfjail::setup::test_perf;
 ///
 /// // Verify that perf is properly set up
 /// assert_eq!(test_perf().unwrap_or(false), true);
 /// ```
 /// # Errors
-/// Returns a [`SysctlError`] if the `kernel.perf_event_paranoid` sysctl cannot be read or doesn't exist
+/// Returns a [`SysctlError`] if the `kernel.perf_event_paranoid` sysctl cannot be read or doesn't exist.
 pub fn test_perf() -> Result<bool, SysctlError> {
     let ctl = sysctl::Ctl::new("kernel.perf_event_paranoid")?;
     let ctl_string = ctl.value_string()?;
@@ -39,40 +39,40 @@ pub fn test_perf() -> Result<bool, SysctlError> {
     Ok(ctl_string == "-1")
 }
 
-/// Temporarily sets the Linux kernel parameters required for running libsio2jail with the [PERF](crate::process::executor::Feature::PERF) feature
+/// Temporarily sets the Linux kernel parameters required for running perfjail with the [`PERF`](crate::process::jail::Feature::PERF) feature.
 ///
-/// This setup does not persist across reboots. For that, see [`set_perf_up_permanently`]
+/// This setup does not persist across reboots. For that, see [`set_perf_up_permanently`].
 /// ```no_run
-/// use libsio2jail::setup::set_perf_up_temporarily;
+/// use perfjail::setup::set_perf_up_temporarily;
 ///
-/// // Temporarily set Linux up for using libsio2jail with perf
+/// // Temporarily set Linux up for using perfjail with perf
 /// set_perf_up_temporarily().expect("failed to set up perf");
 /// ```
 /// # Errors
-/// Returns a [`PerfSetupError`] if setting perf up failed
+/// Returns a [`PerfSetupError`] if setting perf up failed.
 pub fn set_perf_up_temporarily() -> Result<(), PerfSetupError> {
     pkexec_command("sysctl", vec!["-w", "kernel.perf_event_paranoid=-1"])
 }
 
-/// Permanently sets the Linux kernel parameters required for running libsio2jail with the [PERF](crate::process::executor::Feature::PERF) feature (this persists across reboots)
+/// Permanently sets the Linux kernel parameters required for running perfjail with the [`PERF`](crate::process::jail::Feature::PERF) feature (this persists across reboots).
 ///
-/// This is achieved by adding a line to `/etc/sysctl.conf`
+/// This is achieved by adding a line to `/etc/sysctl.conf`.
 ///
-/// If you want to set the kernel parameters without persisting across reboots, see [`set_perf_up_temporarily`]
+/// If you want to set the kernel parameters without persisting across reboots, see [`set_perf_up_temporarily`].
 /// ```no_run
-/// use libsio2jail::setup::set_perf_up_permanently;
+/// use perfjail::setup::set_perf_up_permanently;
 ///
-/// // Permanently set Linux up for using libsio2jail with perf
+/// // Permanently set Linux up for using perfjail with perf
 /// set_perf_up_permanently().expect("failed to set up perf");
 /// ```
 /// # Errors
-/// Returns a [`PerfSetupError`] if setting perf up failed
+/// Returns a [`PerfSetupError`] if setting perf up failed.
 pub fn set_perf_up_permanently() -> Result<(), PerfSetupError> {
     pkexec_command("bash", vec![
 		"-c",
 			"set -e;\
 			sysctl -w kernel.perf_event_paranoid=-1;\
-			echo -e \"\n# Settings required by sio2jail:\nkernel.perf_event_paranoid = -1\" >> /etc/sysctl.conf;"
+			echo -e \"\n# Settings required by perfjail:\nkernel.perf_event_paranoid = -1\" >> /etc/sysctl.conf;"
 	])
 }
 

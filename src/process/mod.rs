@@ -4,14 +4,14 @@ pub(crate) mod child;
 pub(crate) mod data;
 pub(crate) mod error;
 pub(crate) mod execution_result;
-pub(crate) mod executor;
+pub(crate) mod jail;
 
-pub use self::child::Sio2jailChild;
+pub use self::child::JailedChild;
 pub use self::execution_result::ExecutionResult;
 pub use self::execution_result::ExitReason;
 pub use self::execution_result::ExitStatus;
-pub use self::executor::Feature;
-pub use self::executor::Sio2jailExecutor;
+pub use self::jail::Feature;
+pub use self::jail::PerfJail;
 
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) enum ExecuteAction {
