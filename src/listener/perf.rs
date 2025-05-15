@@ -17,6 +17,7 @@ use std::ffi::{c_long, c_ulong, c_void};
 use std::mem::{size_of_val, zeroed};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::Barrier;
+use cvt::cvt;
 
 #[derive(Debug)]
 pub(crate) struct PerfListener {
@@ -57,13 +58,13 @@ impl Listener for PerfListener {
             attrs.set_enable_on_exec(1);
             attrs.set_inherit(1);
 
-            let perf_fd = perf_event_open(
+            let perf_fd = cvt(perf_event_open(
                 &mut attrs,
                 data.pid.unwrap(),
                 -1,
                 -1,
                 (PERF_FLAG_FD_NO_GROUP | PERF_FLAG_FD_CLOEXEC) as c_ulong,
-            );
+            )).unwrap();
             self.perf_fd = Some(OwnedFd::from_raw_fd(perf_fd));
         }
         

@@ -1,17 +1,19 @@
 use std::ffi::{c_int, c_void, CString, OsStr};
-use std::io;
+use std::{fs, io, mem};
 use std::os::fd::{BorrowedFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
+use std::ptr::{null, null_mut};
+use std::sync::Barrier;
 use std::time::Duration;
 
 use cvt::cvt;
 use enumset::{EnumSet, EnumSetType};
-use libc::{clone, malloc, CLONE_PIDFD, CLONE_VM, SIGCHLD};
+use libc::{clone, malloc, pthread_attr_destroy, pthread_attr_init, pthread_attr_setdetachstate, pthread_attr_t, pthread_create, pthread_detach, pthread_join, pthread_t, CLONE_PIDFD, CLONE_VM, PTHREAD_CREATE_DETACHED, SIGCHLD};
 
 use crate::listener::perf::PerfListener;
 use crate::listener::seccomp::SeccompListener;
 use crate::listener::Listener;
-use crate::process::child::{execute_child, JailedChild};
+use crate::process::child::{cloner, execute_child, JailedChild};
 use crate::process::data::{ExecutionContext, ExecutionData, ExecutionSettings};
 use crate::process::jail::Feature::PERF;
 use crate::util::{CHILD_STACK_SIZE, CYCLES_PER_SECOND};
@@ -410,24 +412,32 @@ impl<'a> Perfjail<'a> {
             listeners,
         });
 
-        let child_stack = unsafe { malloc(CHILD_STACK_SIZE) };
         unsafe {
-            let mut pid_fd: c_int = -1;
+            let mut attr: pthread_attr_t = mem::zeroed();
+            let mut thread: pthread_t = mem::zeroed();
+            pthread_attr_init(&mut attr as *mut pthread_attr_t);
+            pthread_attr_setdetachstate(&mut attr as *mut pthread_attr_t, PTHREAD_CREATE_DETACHED);
+            pthread_create(&mut thread, &attr, cloner, (&mut *context as *mut ExecutionContext) as *mut c_void);
+            pthread_attr_destroy(&mut attr as *mut pthread_attr_t);
 
+            context.data.clone_barrier.wait();
+
+            context.data.pid_fd = Some(OwnedFd::from_raw_fd(context.data.raw_pid_fd));
             context.data.pid = Some(
-                cvt(clone(
-                    execute_child,
-                    child_stack.add(CHILD_STACK_SIZE),
-                    CLONE_VM | CLONE_PIDFD | SIGCHLD,
-                    (&mut *context as *mut ExecutionContext) as *mut c_void,
-                    &mut pid_fd as *mut c_int as *mut c_void,
-                ))
-                .unwrap(),
+                fs::read_to_string(format!("/proc/self/fdinfo/{}", context.data.raw_pid_fd))
+                    .expect("The file descriptor does not exist")
+                    .split("\n")
+                    .find(|line| { line.contains("Pid:") })
+                    .expect("The file descriptor is not a pidfd")
+                    .split_whitespace()
+                    .nth(1)
+                    .expect("The file descriptor is not a valid pidfd")
+                    .trim()
+                    .parse::<c_int>()
+                    .expect("The pid is not valid")
             );
-
-            context.data.pid_fd = Some(OwnedFd::from_raw_fd(pid_fd));
         }
 
-        Ok(JailedChild::new(context, child_stack))
+        Ok(JailedChild::new(context))
     }
 }
