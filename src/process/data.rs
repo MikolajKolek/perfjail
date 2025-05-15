@@ -1,12 +1,14 @@
-use std::ffi::{c_int, CString};
+use std::ffi::{c_int, c_void, CString};
 use std::os::fd::{BorrowedFd, OwnedFd};
 use std::path::PathBuf;
+use std::sync::Barrier;
 use std::time::Duration;
-
+use libc::malloc;
 use crate::listener::Listener;
 use crate::process::error::RunError;
 use crate::process::execution_result::ExecutionResult;
 use crate::process::jail::Perfjail;
+use crate::util::CHILD_STACK_SIZE;
 
 #[derive(Debug)]
 pub(crate) struct ExecutionContext<'a> {
@@ -31,9 +33,12 @@ pub(crate) struct ExecutionSettings<'a> {
 #[derive(Debug)]
 pub(crate) struct ExecutionData {
     pub(crate) pid_fd: Option<OwnedFd>,
+    pub(crate) raw_pid_fd: c_int,
     pub(crate) pid: Option<c_int>,
     pub(crate) execution_result: ExecutionResult,
     pub(crate) child_error: Option<RunError>,
+    pub(crate) child_stack: Box<c_void>,
+    pub(crate) clone_barrier: Barrier
 }
 
 impl ExecutionSettings<'_> {
@@ -55,9 +60,12 @@ impl ExecutionData {
     pub(crate) fn new() -> ExecutionData {
         ExecutionData {
             pid_fd: None,
+            raw_pid_fd: 0,
             pid: None,
             execution_result: ExecutionResult::new(),
             child_error: None,
+            child_stack: unsafe { Box::from_raw(malloc(CHILD_STACK_SIZE)) },
+            clone_barrier: Barrier::new(2)
         }
     }
 }

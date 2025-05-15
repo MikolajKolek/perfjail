@@ -1,11 +1,12 @@
+use crate::process::data::ExecutionContext;
+use crate::process::error::RunError;
+use crate::process::execution_result::{ExecutionResult, ExitReason};
+use crate::process::ExecuteAction::{Continue, Kill};
+use crate::util::CHILD_STACK_SIZE;
 use cvt::cvt;
-use libc::{
-    id_t, kill, pid_t, siginfo_t, waitid, waitpid, CLD_DUMPED, CLD_EXITED, CLD_KILLED, P_PID,
-    SIGKILL, WEXITED, WNOHANG, WNOWAIT, WSTOPPED,
-};
+use libc::{clone, id_t, kill, pid_t, siginfo_t, waitid, waitpid, CLD_DUMPED, CLD_EXITED, CLD_KILLED, CLONE_PIDFD, CLONE_VFORK, CLONE_VM, P_PID, SIGCHLD, SIGKILL, WEXITED, WNOHANG, WNOWAIT, WSTOPPED};
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
-use nix::unistd::{chdir, close, dup2, execvp};
-use std::any::Any;
+use nix::unistd::{chdir, close, dup2_stderr, dup2_stdin, dup2_stdout, execvp};
 use std::cmp::min;
 use std::ffi::{c_int, c_void};
 use std::io;
@@ -13,11 +14,6 @@ use std::mem::zeroed;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::PathBuf;
 use std::ptr::null_mut;
-
-use crate::process::data::ExecutionContext;
-use crate::process::error::RunError;
-use crate::process::execution_result::{ExecutionResult, ExitReason};
-use crate::process::ExecuteAction::{Continue, Kill};
 
 /// Representation of a perfjail child process that's waiting to be run, running or exited.
 ///
@@ -50,14 +46,12 @@ use crate::process::ExecuteAction::{Continue, Kill};
 /// ```
 pub struct JailedChild<'a> {
     context: Box<ExecutionContext<'a>>,
-    child_stack: Box<dyn Any>,
 }
 
 impl JailedChild<'_> {
-    pub(crate) fn new(context: Box<ExecutionContext>, child_stack: *mut c_void) -> JailedChild {
+    pub(crate) fn new(context: Box<ExecutionContext>) -> JailedChild {
         JailedChild {
             context,
-            child_stack: unsafe { Box::from_raw(child_stack) },
         }
     }
 
@@ -112,7 +106,7 @@ impl JailedChild<'_> {
                 &mut poll_fds,
                 PollTimeout::try_from(timeout.unwrap_or(-1)).unwrap(),
             );
-            if poll_result.is_err() && poll_result.unwrap_err() == nix::errno::Errno::EINTR {
+            if poll_result.is_err() && (poll_result.unwrap_err() == nix::errno::Errno::EINTR || poll_result.unwrap_err() == nix::errno::Errno::EAGAIN) {
                 continue;
             }
 
@@ -209,6 +203,23 @@ impl Drop for JailedChild<'_> {
     }
 }
 
+pub(crate) extern "C" fn cloner(memory: *mut c_void) -> *mut c_void {
+    unsafe {
+        let context_ptr = memory as *mut ExecutionContext;
+        let context = &mut (*context_ptr);
+
+        clone(
+                execute_child,
+                (&mut *context.data.child_stack as *mut c_void).add(CHILD_STACK_SIZE),
+                CLONE_VM | CLONE_PIDFD | CLONE_VFORK | SIGCHLD,
+                (&mut *context as *mut ExecutionContext) as *mut c_void,
+                &mut context.data.raw_pid_fd as *mut c_int as *mut c_void,
+        );
+        
+        null_mut()
+    }
+}
+
 pub(crate) extern "C" fn execute_child(memory: *mut c_void) -> c_int {
     let context_ptr = memory as *mut ExecutionContext;
     let context = unsafe { &mut (*context_ptr) };
@@ -219,6 +230,8 @@ pub(crate) extern "C" fn execute_child(memory: *mut c_void) -> c_int {
 }
 
 fn execute_child_impl(context: &mut ExecutionContext) -> Result<(), RunError> {
+    context.data.clone_barrier.wait();
+    
     context
         .listeners
         .iter_mut()
@@ -229,15 +242,15 @@ fn execute_child_impl(context: &mut ExecutionContext) -> Result<(), RunError> {
     }
 
     if let Some(stdin_fd) = context.settings.stdin_fd.as_ref() {
-        dup2(stdin_fd.as_raw_fd(), 0)?;
+        dup2_stdin(stdin_fd)?;
         close(stdin_fd.as_raw_fd())?;
     }
     if let Some(stdout_fd) = context.settings.stdout_fd.as_ref() {
-        dup2(stdout_fd.as_raw_fd(), 1 as c_int)?;
+        dup2_stdout(stdout_fd)?;
         close(stdout_fd.as_raw_fd())?;
     }
     if let Some(stderr_fd) = context.settings.stderr_fd.as_ref() {
-        dup2(stderr_fd.as_raw_fd(), 2 as c_int)?;
+        dup2_stderr(stderr_fd)?;
         close(stderr_fd.as_raw_fd())?;
     }
 
