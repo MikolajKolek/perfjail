@@ -1,22 +1,19 @@
 use std::ffi::{c_int, c_void, CString, OsStr};
-use std::{fs, io, mem};
 use std::os::fd::{BorrowedFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
-use std::ptr::{null, null_mut};
-use std::sync::Barrier;
 use std::time::Duration;
+use std::{fs, io, mem};
 
-use cvt::cvt;
 use enumset::{EnumSet, EnumSetType};
-use libc::{clone, malloc, pthread_attr_destroy, pthread_attr_init, pthread_attr_setdetachstate, pthread_attr_t, pthread_create, pthread_detach, pthread_join, pthread_t, CLONE_PIDFD, CLONE_VM, PTHREAD_CREATE_DETACHED, SIGCHLD};
+use libc::{pthread_attr_destroy, pthread_attr_init, pthread_attr_setdetachstate, pthread_attr_t, pthread_create, pthread_t, PTHREAD_CREATE_DETACHED};
 
 use crate::listener::perf::PerfListener;
 use crate::listener::seccomp::SeccompListener;
 use crate::listener::Listener;
-use crate::process::child::{cloner, execute_child, JailedChild};
+use crate::process::child::{clone_and_execute, JailedChild};
 use crate::process::data::{ExecutionContext, ExecutionData, ExecutionSettings};
 use crate::process::jail::Feature::PERF;
-use crate::util::{CHILD_STACK_SIZE, CYCLES_PER_SECOND};
+use crate::util::CYCLES_PER_SECOND;
 
 /// A builder based on [`std::process::Command`] used to configure and spawn perfjail processes.
 ///
@@ -156,7 +153,7 @@ impl<'a> Perfjail<'a> {
 
     /// Adds multiple arguments to pass to the program.
     ///
-    /// To pass a single argument see [`arg`](Perfjail::arg).
+    /// To pass a single argument, see [`arg`](Perfjail::arg).
     ///
     /// Note that the arguments are not passed through a shell, but given
     /// literally to the program. This means that shell syntax like quotes,
@@ -196,7 +193,7 @@ impl<'a> Perfjail<'a> {
     /// whether it should be interpreted relative to the parent's working
     /// directory or relative to `current_dir`. The behavior in this case is
     /// platform specific and unstable, and it's recommended to use
-    /// [`std::fs::canonicalize`] to get an absolute program path instead.
+    /// [`fs::canonicalize`] to get an absolute program path instead.
     ///
     /// # Examples
     ///
@@ -417,7 +414,7 @@ impl<'a> Perfjail<'a> {
             let mut thread: pthread_t = mem::zeroed();
             pthread_attr_init(&mut attr as *mut pthread_attr_t);
             pthread_attr_setdetachstate(&mut attr as *mut pthread_attr_t, PTHREAD_CREATE_DETACHED);
-            pthread_create(&mut thread, &attr, cloner, (&mut *context as *mut ExecutionContext) as *mut c_void);
+            pthread_create(&mut thread, &attr, clone_and_execute, (&mut *context as *mut ExecutionContext) as *mut c_void);
             pthread_attr_destroy(&mut attr as *mut pthread_attr_t);
 
             context.data.clone_barrier.wait();

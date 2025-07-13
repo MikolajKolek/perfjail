@@ -9,11 +9,11 @@ use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::unistd::{chdir, close, dup2_stderr, dup2_stdin, dup2_stdout, execvp};
 use std::cmp::min;
 use std::ffi::{c_int, c_void};
-use std::io;
 use std::mem::zeroed;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::PathBuf;
 use std::ptr::null_mut;
+use std::io;
 
 /// Representation of a perfjail child process that's waiting to be run, running or exited.
 ///
@@ -110,7 +110,7 @@ impl JailedChild<'_> {
                 continue;
             }
 
-            let poll_result = poll_result.unwrap();
+            let poll_result = poll_result?;
             if poll_result == 0 {
                 // This means that one of the listeners' timeouts has finished, and we need to call all the on_wakeup functions again
                 continue;
@@ -203,7 +203,7 @@ impl Drop for JailedChild<'_> {
     }
 }
 
-pub(crate) extern "C" fn cloner(memory: *mut c_void) -> *mut c_void {
+pub(crate) extern "C" fn clone_and_execute(memory: *mut c_void) -> *mut c_void {
     unsafe {
         let context_ptr = memory as *mut ExecutionContext;
         let context = &mut (*context_ptr);
@@ -220,7 +220,7 @@ pub(crate) extern "C" fn cloner(memory: *mut c_void) -> *mut c_void {
     }
 }
 
-pub(crate) extern "C" fn execute_child(memory: *mut c_void) -> c_int {
+extern "C" fn execute_child(memory: *mut c_void) -> c_int {
     let context_ptr = memory as *mut ExecutionContext;
     let context = unsafe { &mut (*context_ptr) };
 
