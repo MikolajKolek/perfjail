@@ -376,6 +376,12 @@ impl<'a> Perfjail<'a> {
         self
     }
 
+    pub fn instruction_count_limit(mut self, limit: i64) -> Perfjail<'a> {
+        self.instruction_count_limit = Some(limit);
+        self = self.features(PERF);
+        self
+    }
+
     /// Spawns the child process used for the execution of the program, returning a handle to it.
     ///
     /// Note that this does not start the execution of the program and instead just spawns the child process preparing for its execution, waiting for it to start until [`JailedChild::run`](JailedChild::run) is run.

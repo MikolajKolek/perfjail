@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-
+use std::os::fd::BorrowedFd;
 use crate::process::data::{ExecutionData, ExecutionSettings};
 use crate::process::error::RunError;
 use crate::process::ExecuteAction;
@@ -8,6 +8,8 @@ pub(crate) mod perf;
 pub(crate) mod seccomp;
 
 pub(crate) trait Listener: Debug {
+    fn get_poll_fds(&mut self) -> Vec<BorrowedFd>;
+
     fn on_post_fork_child(
         &mut self,
         settings: &ExecutionSettings,

@@ -30,7 +30,7 @@ mod tests {
             .stdin(input_file.as_fd())
             .stdout(output_file.as_fd())
             .features(PERF)
-            .measured_time_limit(Duration::from_millis(500))
+            .measured_time_limit(Duration::from_millis(1))
             .spawn()
             .unwrap();
         let result = child.run().unwrap();

@@ -9,11 +9,11 @@ use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::unistd::{chdir, close, dup2_stderr, dup2_stdin, dup2_stdout, execvp};
 use std::cmp::min;
 use std::ffi::{c_int, c_void};
+use std::io;
 use std::mem::zeroed;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::PathBuf;
 use std::ptr::null_mut;
-use std::io;
 
 /// Representation of a perfjail child process that's waiting to be run, running or exited.
 ///
@@ -97,11 +97,20 @@ impl JailedChild<'_> {
                 self.kill()?
             }
 
-            let poll_pid_fd = PollFd::new(
-                self.context.data.pid_fd.as_ref().unwrap().as_fd(),
-                PollFlags::POLLIN,
+            let mut poll_fds: Vec<PollFd> = self.context.listeners.iter_mut().map(|listener| {
+                listener
+                    .get_poll_fds()
+                    .iter()
+                    .map(|fd| PollFd::new(*fd, PollFlags::POLLIN))
+                    .collect::<Vec<PollFd>>()
+            }).collect::<Vec<Vec<PollFd>>>().into_iter().flatten().collect();
+            poll_fds.push(
+                PollFd::new(
+                    self.context.data.pid_fd.as_ref().unwrap().as_fd(),
+                    PollFlags::POLLIN,
+                )
             );
-            let mut poll_fds = [poll_pid_fd];
+
             let poll_result = poll(
                 &mut poll_fds,
                 PollTimeout::try_from(timeout.unwrap_or(-1)).unwrap(),
@@ -111,7 +120,7 @@ impl JailedChild<'_> {
             }
 
             let poll_result = poll_result?;
-            if poll_result == 0 {
+            if !poll_fds.last().unwrap().revents().unwrap().contains(PollFlags::POLLIN) {
                 // This means that one of the listeners' timeouts has finished, and we need to call all the on_wakeup functions again
                 continue;
             }
