@@ -1,8 +1,9 @@
-use libc::{c_int, size_t};
+use libc::size_t;
 use std::io::Error;
 
 pub(crate) mod siginfo_ext;
 mod fixed_map;
+mod signal_safe_spinlock;
 
 /// The stack size (in bytes) for creating the child process with [`clone`].
 ///
@@ -16,7 +17,3 @@ pub(crate) const CYCLES_PER_SECOND: i64 = 2_000_000_000;
 pub(crate) fn errno() -> i32 {
     Error::last_os_error().raw_os_error().unwrap_or(0)
 }
-
-/// The libc [sig_atomic_t](https://en.cppreference.com/w/c/program/sig_atomic_t) type.
-#[allow(non_camel_case_types)]
-type sig_atomic_t = c_int;

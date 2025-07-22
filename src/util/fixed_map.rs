@@ -1,102 +1,161 @@
-use libc::c_int;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, Ordering};
+use crate::util::signal_safe_spinlock::SignalSafeSpinlock;
+use libc::{c_int, write};
+use std::ffi::c_void;
+use std::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
-use crate::util::sig_atomic_t;
 
-struct FixedMapBucketEntry<V> {
-    key: sig_atomic_t,
-    value: *const V,
-    modifying: sig_atomic_t,
-    id: i32,
+struct FixedMapBucketEntry {
+    key: AtomicI32,
+    value: AtomicI32,
+    lock: SignalSafeSpinlock,
 }
 
-struct FixedMapBucket<V> {
-    values: *mut FixedMapBucketEntry<V>,
-    length: sig_atomic_t,
-    modify_lock: AtomicBool,
+struct FixedMapBucket {
+    values_vec: Vec<FixedMapBucketEntry>,
+    values_ptr: *const FixedMapBucketEntry,
+    length: AtomicUsize,
+    bucket_modify_mutex: Mutex<()>,
 }
 
-//TODO: Needs a full rework with LOCK CMPXCHG
-/// A hashmap maintaining some very specific properties:
-/// - It maintains a fixed capacity provided at the time of creation
-/// - It guarantees that the [FixedMap::get] operation is async-signal-safe
-/// - For a given key, it maintains a set order of operations:
-///     - (Thread 1) Insert, {(Any thread) Read, (Any thread) Read, ...}, (Thread 1) Delete
-///     - (Thread 2) Insert, {(Any thread) Read, (Any thread) Read, ...}, (Thread 2) Delete
-///     - ...
-pub(crate) struct FixedMap<V> {
-    buckets: *mut FixedMapBucket<V>,
-    length: sig_atomic_t,
-}
+impl FixedMapBucket {
+    pub(crate) fn new(bucket_size: usize) -> Self {
+        let mut values_vec = Vec::with_capacity(bucket_size);
 
-impl<V> FixedMap<V> {
-    pub(crate) fn new(capacity: usize) -> Self {
-        let mut vec = Vec::with_capacity(capacity);
-        for _ in 0..capacity {
-            vec.push(
-                FixedMapEntry {
-                    start: None,
-                    insert_lock: AtomicBool::new(false),
-                    delete_lock: AtomicBool::new(false),
+        for _ in 0..bucket_size {
+            values_vec.push(
+                FixedMapBucketEntry {
+                    key: AtomicI32::new(-1),
+                    value: AtomicI32::new(0),
+                    lock: SignalSafeSpinlock::new(),
                 }
             )
         }
 
-        let test: AtomicU8;
-        test.compare_exchange()
-
-        FixedMap {
-            vec,
+        let values_ptr = values_vec.as_ptr();
+        FixedMapBucket {
+            values_vec,
+            values_ptr,
+            length: AtomicUsize::new(0),
+            bucket_modify_mutex: Mutex::new(()),
         }
     }
+}
 
+pub(crate) struct FixedMap {
+    buckets_vec: Vec<FixedMapBucket>,
+    buckets_ptr: *const FixedMapBucket,
+    bucket_count: usize,
+    bucket_size: usize,
+    id_counter: AtomicU64,
+}
+
+impl FixedMap {
     fn hash(&self, key: c_int) -> usize {
-        (key % self.length) as usize
+        (key as usize) % self.bucket_count
     }
 
-    pub(crate) fn insert(&mut self, key: c_int, value: *mut V) {
-        let hash = self.hash(key);
+    fn modify_entry(&self, entry: &FixedMapBucketEntry, new_value: (i32, i32)) {
+        entry.lock.with_lock(|| {
+            entry.key.store(new_value.0, Ordering::Relaxed);
+            entry.value.store(new_value.1, Ordering::Relaxed);
+        });
+    }
 
-        while self.vec[hash].insert_lock.swap(true, Ordering::Acquire) {
-            std::hint::spin_loop();
+    pub(crate) fn new(bucket_count: usize, bucket_size: usize) -> Self {
+        let mut buckets_vec = Vec::with_capacity(bucket_count);
+
+        for _ in 0..bucket_count {
+            buckets_vec.push(FixedMapBucket::new(bucket_size))
         }
 
-        self.vec[hash].start = Some(
-            Box::new(
-                FixedMapListEntry {
-                    key,
-                    value: AtomicPtr::new(value),
-                    next: self.vec[hash].start.take()
-                }
-            )
-        );
-
-        self.vec[hash].insert_lock.store(false, Ordering::Release);
+        let buckets_ptr = buckets_vec.as_ptr();
+        FixedMap {
+            buckets_vec,
+            buckets_ptr,
+            bucket_count,
+            bucket_size,
+            id_counter: AtomicU64::new(0),
+        }
     }
 
-    pub(crate) fn remove(&self, key: c_int) {
-
-    }
-
-    /// Get is guaranteed to be async-signal-safe
-    pub(crate) fn get(&self, key: sig_atomic_t) -> Option<*const V> {
+    pub(crate) fn insert(&mut self, key: c_int, value: c_int) {
         let hash = self.hash(key);
+        let _guard = self.buckets_vec[hash].bucket_modify_mutex.lock().expect("Failed to acquire modify_lock");
 
-        unsafe {
-            let current = &*self.buckets.add(hash);
-            let len = current.length;
+        let length = self.buckets_vec[hash].length.load(Ordering::Acquire);
+        let mut first_empty = length;
+        for (i, entry) in self.buckets_vec[hash].values_vec.iter().enumerate().take(length) {
+            let entry_key = entry.key.load(Ordering::Acquire);
 
-            for i in 0..len {
-                let entry = &*current.values.add(i as usize);
-
-                if entry.key == key {
-                    return Some(entry.value)
-                }
+            if entry_key == key {
+                self.modify_entry(entry, (key, value));
+                return;
+            }
+            if entry_key == -1 && first_empty == length {
+                first_empty = i;
             }
         }
 
-        Mutex::new(None);
-        let test: AtomicPtr<>;
-        None
+        if first_empty == length {
+            if length == self.bucket_size {
+                panic!("FixedMap bucket is full!");
+            }
+
+            self.modify_entry(&self.buckets_vec[hash].values_vec[first_empty], (key, value));
+            self.buckets_vec[hash].length.store(length + 1, Ordering::Release);
+        }
+        else {
+            self.modify_entry(&self.buckets_vec[hash].values_vec[first_empty], (key, value));
+        }
+    }
+
+    pub(crate) fn remove(&self, key: c_int) {
+        let hash = self.hash(key);
+        let _guard = self.buckets_vec[hash].bucket_modify_mutex.lock().expect("Failed to acquire modify_lock");
+
+        let length = self.buckets_vec[hash].length.load(Ordering::Acquire);
+        for (i, entry) in self.buckets_vec[hash].values_vec.iter().enumerate().take(length) {
+            if entry.key.load(Ordering::Acquire) == key {
+                self.modify_entry(entry, (-1, 0));
+                if i == length - 1 {
+                    let mut to_decrease = 1;
+                    while to_decrease < length &&
+                        self.buckets_vec[hash].values_vec[i - to_decrease].key.load(Ordering::Acquire) == -1 {
+                        to_decrease += 1;
+                    }
+
+                    self.buckets_vec[hash].length.store(length - to_decrease, Ordering::Release);
+                }
+
+                return;
+            }
+        }
+    }
+
+    pub(crate) fn get_and_write(&self, key: c_int) {
+        let hash = self.hash(key);
+
+        unsafe {
+            let current = &*self.buckets_ptr.add(hash);
+            let len = current.length.load(Ordering::Acquire);
+
+            for i in 0..len {
+                let entry = &*current.values_ptr.add(i);
+
+                if entry.key.load(Ordering::Acquire) == key {
+                    entry.lock.try_with_lock(|| {
+                        if entry.key.load(Ordering::Relaxed) != key {
+                            return;
+                        }
+
+                        let result = entry.value.load(Ordering::Relaxed);
+                        let buf = [1u8];
+                        write(result, buf.as_ptr() as *const c_void, buf.len());
+                    });
+
+                    return;
+                }
+            }
+        }
     }
 }
