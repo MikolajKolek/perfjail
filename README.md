@@ -14,7 +14,7 @@ The project is also currently very much a work in progress (however, the main fu
 
 # Requirements
 
-Perfjail currently requires the usage of Linux 5.3. This value may decrease as the project evolves further.
+Perfjail currently requires the usage of Linux 5.3 or above. This value may decrease as the project evolves further.
 
 Usage of the `setup` module also requires `bash`, `pkexec` and `sysctl`.
 
