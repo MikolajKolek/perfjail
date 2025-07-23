@@ -1,9 +1,10 @@
 use crate::listener::WakeupAction;
+use crate::process::child::ChildState::{Reapable, Reaped};
 use crate::process::data::ExecutionContext;
 use crate::process::execution_result::{ExecutionResult, ExitReason};
-use crate::util::CHILD_STACK_SIZE;
-use cvt::cvt;
-use libc::{clone, id_t, kill, pid_t, siginfo_t, waitid, waitpid, CLD_DUMPED, CLD_EXITED, CLD_KILLED, CLONE_PIDFD, CLONE_VFORK, CLONE_VM, P_PID, SIGCHLD, SIGKILL, WEXITED, WNOHANG, WNOWAIT, WSTOPPED};
+use crate::util::{kill_pid, CHILD_STACK_SIZE};
+use cvt::{cvt, cvt_r};
+use libc::{clone, id_t, pid_t, siginfo_t, waitid, waitpid, CLD_DUMPED, CLD_EXITED, CLD_KILLED, CLONE_PIDFD, CLONE_VFORK, CLONE_VM, P_PID, SIGCHLD, WEXITED, WNOHANG, WNOWAIT, WSTOPPED};
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::unistd::{chdir, close, dup2_stderr, dup2_stdin, dup2_stdout, execvp};
 use std::ffi::{c_int, c_void};
@@ -11,19 +12,24 @@ use std::io;
 use std::mem::zeroed;
 use std::os::fd::{AsFd, AsRawFd};
 use std::ptr::null_mut;
+use std::sync::{Mutex, Once};
+
+enum ChildState {
+    Reapable { pid: pid_t },
+    Reaped
+}
 
 /// Representation of a perfjail child process that's waiting to be run, running or exited.
 ///
 /// This structure is used to represent and manage child processes. A child
 /// process is created via the [`Perfjail`](crate::process::Perfjail) struct, which configures the
-/// spawning process and can itself be constructed using a builder-style
-/// interface.
+/// spawning process and can itself be constructed using a builder-style interface.
 ///
-/// If the `JailedChild` is dropped, the child process is terminated.
+/// Calling [`run`](JailedChild::run) will make the parent process wait until the child has
+/// exited before continuing.
 ///
-/// Calling [`run`](JailedChild::run) will make
-/// the parent process wait until the child has exited before
-/// continuing.
+/// Similarly to [`std::process::Command`], dropping the child without waiting for [`run`](JailedChild::run)
+/// to finish at least once will not free its resources and will leave it hanging as a zombie process.
 ///
 /// # Examples
 ///
@@ -42,35 +48,112 @@ use std::ptr::null_mut;
 /// assert!(matches!(result.exit_reason, Exited { exit_status: 0 }));
 /// ```
 pub struct JailedChild<'a> {
-    context: Box<ExecutionContext<'a>>,
+    child_internals: Mutex<ChildInternals<'a>>,
+    child_state: Mutex<ChildState>,
+    run_once: Once
 }
+
+struct ChildInternals<'a> {
+    context: Box<ExecutionContext<'a>>,
+    run_error: Option<io::Error>,
+}
+
+unsafe impl Sync for JailedChild<'_> {}
+unsafe impl Send for JailedChild<'_> {}
 
 impl JailedChild<'_> {
     pub(crate) fn new(context: Box<ExecutionContext>) -> JailedChild {
+        let pid = context.data.pid.unwrap();
+
         JailedChild {
-            context,
+            child_internals: Mutex::new(ChildInternals { context, run_error: None }),
+            child_state: Mutex::new(Reapable { pid }),
+            run_once: Once::new(),
         }
     }
 
     /// Runs the child process and waits for it to exit completely, returning the result that it
-    /// exited with. After the function returns, the [`JailedChild`] object is consumed.
+    /// exited with. This function will continue to have the same return value after it has been
+    /// called at least once.
     ///
     /// # Examples
     ///
     /// Basic usage:
     ///
     /// ```
-    /// use perfjail::process::Perfjail;
+    /// use perfjail::process::{ExitReason, Perfjail};
     ///
     /// let mut jail = Perfjail::new("ls");
     /// if let Ok(mut child) = jail.spawn() {
-    ///     child.run().expect("perfjail wasn't running");
-    ///     println!("Perfjail has finished its execution!");
+    ///     let result = child.run().expect("perfjail wasn't running");
+    ///     assert_eq!(result.exit_reason, ExitReason::Exited { exit_status: 0 });
     /// } else {
-    ///     println!("ls command didn't start");
+    ///     panic!("ls command didn't start");
     /// }
     /// ```
-    pub fn run(mut self) -> io::Result<ExecutionResult> {
+    pub fn run(&self) -> io::Result<ExecutionResult> {
+        let mut child_internals = self.child_internals.lock()
+            .expect("Failed to lock child_internals");
+        self.run_once.call_once(|| child_internals.run_saving_result(&self.child_state));
+
+        if let Some(e) = (&mut child_internals).run_error.take() {
+            Err(e)
+        } else {
+            Ok(child_internals.context.data.execution_result.clone())
+        }
+    }
+
+    /// Forces the child process to exit. If the child has already exited, `Ok(())` is returned.
+    ///
+    /// This is equivalent to sending a SIGKILL signal.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```no_run
+    /// use perfjail::process::{ExitReason, Perfjail};
+    ///
+    /// let jail = Perfjail::new("yes");
+    /// if let Ok(child) = jail.spawn() {
+    ///     child.kill().expect("perfjail couldn't be killed");
+    ///     assert_eq!(child.run().unwrap().exit_reason, ExitReason::Killed { signal: 9 });
+    /// } else {
+    ///     panic!("yes command didn't start");
+    /// }
+    /// ```
+    pub fn kill(&self) -> io::Result<()> {
+        let child_state = self.child_state.lock().expect("Failed to lock child_state");
+
+        if let Reapable { pid } = *child_state {
+            kill_pid(pid)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl ChildInternals<'_> {
+    pub(crate) fn run_saving_result(&mut self, child_state: &Mutex<ChildState>) {
+        if let Err(e) = self.run() {
+            _ = self.run_error.insert(e);
+        }
+
+        unsafe {
+            kill_pid(self.context.data.pid.unwrap()).expect("Failed to kill child process");
+
+            let mut child_state = child_state.lock().expect("Failed to lock pid_valid");
+            *child_state = Reaped;
+
+            cvt_r(|| { waitpid(
+                self.context.data.pid.unwrap() as id_t as pid_t,
+                null_mut::<c_int>(),
+                WNOHANG,
+            )}).expect("Failed to clean up child process");
+        }
+    }
+
+    fn run(&mut self) -> io::Result<()> {
         self.propagate_child_error()?;
         for listener in &mut self.context.listeners {
             listener.on_post_clone_parent(&self.context.settings, &mut self.context.data)?;
@@ -79,13 +162,13 @@ impl JailedChild<'_> {
         loop {
             let mut action = WakeupAction::Continue { next_wakeup: None };
             for listener in &mut self.context.listeners {
-                action = action.preserve_kill(
+                action = action.combine(
                     listener.on_wakeup(&self.context.settings, &mut self.context.data)?
                 );
             }
 
             if action == WakeupAction::Kill {
-                self.kill()?
+                kill_pid(self.context.data.pid.unwrap())?
             }
 
             let poll_pid_fd = PollFd::new(
@@ -103,43 +186,40 @@ impl JailedChild<'_> {
 
             let poll_result = poll_result?;
             if poll_result == 0 {
-                // This means that one of the listeners' timeouts has finished, and we need to call all the on_wakeup functions again
+                // This means that one of the listeners' timeouts has finished,
+                // and we need to call all the on_wakeup functions again
                 continue;
             }
 
             let mut wait_info: siginfo_t = unsafe { zeroed() };
             unsafe {
-                _ = waitid(
+                cvt_r(|| { waitid(
                     P_PID,
                     self.context.data.pid.unwrap() as id_t,
                     &mut wait_info as *mut siginfo_t,
                     WEXITED | WSTOPPED | WNOWAIT,
-                );
+                )})?;
             }
 
             self.propagate_child_error()?;
 
-            if wait_info.si_code == CLD_EXITED
-                || wait_info.si_code == CLD_KILLED
-                || wait_info.si_code == CLD_DUMPED
-            {
-                unsafe {
-                    if wait_info.si_code == CLD_EXITED {
-                        self.context
-                            .data
-                            .execution_result
-                            .set_exit_reason(ExitReason::Exited {
-                                exit_status: wait_info.si_status(),
-                            });
-                    } else {
-                        self.context
-                            .data
-                            .execution_result
-                            .set_exit_reason(ExitReason::Killed {
-                                signal: wait_info.si_status(),
-                            });
-                    }
-                }
+            if wait_info.si_code == CLD_EXITED {
+                self.context
+                    .data
+                    .execution_result
+                    .set_exit_reason(ExitReason::Exited {
+                        exit_status: unsafe { wait_info.si_status() },
+                    });
+
+                break;
+            }
+            if wait_info.si_code == CLD_KILLED || wait_info.si_code == CLD_DUMPED {
+                self.context
+                    .data
+                    .execution_result
+                    .set_exit_reason(ExitReason::Killed {
+                        signal: unsafe { wait_info.si_status() },
+                    });
 
                 break;
             }
@@ -150,33 +230,7 @@ impl JailedChild<'_> {
         }
 
         self.propagate_child_error()?;
-        Ok(self.context.data.execution_result.clone())
-    }
-
-    /// Forces the child process to exit. If the child has already exited, `Ok(())` is returned.
-    ///
-    /// This is equivalent to sending a SIGKILL signal.
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```no_run
-    /// use perfjail::process::Perfjail;
-    ///
-    /// let mut jail = Perfjail::new("yes");
-    /// if let Ok(mut child) = jail.spawn() {
-    ///     child.kill().expect("perfjail couldn't be killed");
-    /// } else {
-    ///     println!("yes command didn't start");
-    /// }
-    /// ```
-    pub fn kill(&mut self) -> io::Result<()> {
-        unsafe {
-            // The pid is guaranteed to still be valid, even if the child was already killed,
-            // as the child process hasn't yet been waited on, and won't be until it's dropped.
-            cvt(kill(self.context.data.pid.unwrap(), SIGKILL)).map(|_| ())
-        }
+        Ok(())
     }
 
     fn propagate_child_error(&mut self) -> io::Result<()> {
@@ -188,32 +242,22 @@ impl JailedChild<'_> {
     }
 }
 
-impl Drop for JailedChild<'_> {
-    fn drop(&mut self) {
-        self.kill().expect("failed to kill child");
-
-        unsafe {
-            waitpid(
-                self.context.data.pid.unwrap() as id_t as pid_t,
-                null_mut::<c_int>(),
-                WNOHANG,
-            );
-        }
-    }
-}
-
 pub(crate) extern "C" fn clone_and_execute(memory: *mut c_void) -> *mut c_void {
     unsafe {
         let context_ptr = memory as *mut ExecutionContext;
         let context = &mut (*context_ptr);
 
-        clone(
+        let result = cvt(clone(
                 execute_child,
                 (context.data.child_stack.as_mut_ptr() as *mut c_void).add(CHILD_STACK_SIZE),
                 CLONE_VM | CLONE_PIDFD | CLONE_VFORK | SIGCHLD,
                 (&mut *context as *mut ExecutionContext) as *mut c_void,
                 &mut context.data.raw_pid_fd as *mut c_int as *mut c_void,
-        );
+        ));
+        
+        if let Err(e) = result {
+            context.data.child_error = Some(e);
+        }
         
         null_mut()
     }

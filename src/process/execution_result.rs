@@ -9,7 +9,7 @@ use crate::util::CYCLES_PER_SECOND;
 /// the [`Perfjail`](crate::process::Perfjail) struct, and their exit status is exposed through the
 /// [`run`](crate::process::JailedChild::run) method of a [`JailedChild`](crate::process::JailedChild) process.
 #[readonly::make]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutionResult {
     /// Information on whether there were errors during the running of the child program.
     pub exit_status: ExitStatus,
@@ -34,7 +34,7 @@ pub struct ExecutionResult {
 /// A list of possible rules violations and run errors that can occur during the running of the child program.
 ///
 /// All the variants besides [`OK`](ExitStatus::OK) contain additional information about the error in a string, which can be easily accessed through [`get_exit_status_comment`](ExitStatus::get_exit_status_comment).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExitStatus {
     /// OK - the child process returned without errors or sandbox violations.
     OK,
@@ -51,7 +51,7 @@ pub enum ExitStatus {
 }
 
 /// Contains information on whether the child process returned or was killed.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExitReason {
     /// The child exited with an exit status.
     Exited {
@@ -101,8 +101,11 @@ impl ExecutionResult {
     pub(crate) fn set_exit_reason(&mut self, exit_reason: ExitReason) {
         self.exit_reason = exit_reason;
 
-        if let ExitReason::Exited { exit_status } = exit_reason {
-            self.set_exit_status(ExitStatus::RE(format!("runtime error {exit_status}")));
+        match exit_reason {
+            ExitReason::Exited { exit_status } =>
+                self.set_exit_status(ExitStatus::RE(format!("runtime error: return value {exit_status}"))),
+            ExitReason::Killed { signal } =>
+                self.set_exit_status(ExitStatus::RE(format!("runtime error: killed by signal {signal}"))),
         }
     }
 

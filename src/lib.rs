@@ -13,9 +13,12 @@ mod util;
 mod tests {
     use std::fs::File;
     use std::os::fd::AsFd;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
     use std::time::Duration;
 
     use crate::process::execution_result::ExitReason::Exited;
+    use crate::process::{ExecutionResult, ExitReason, ExitStatus};
     use crate::process::jail::Feature::PERF;
     use crate::process::jail::Perfjail;
 
@@ -49,5 +52,53 @@ mod tests {
         );
 
         assert_eq!(result.measured_time.unwrap().as_millis(), 467);
+    }
+
+    #[test]
+    fn concurrent_kill_run_test() {
+        let child = Arc::new(
+            Perfjail::new("sleep")
+                .arg("0.1")
+                .spawn()
+                .unwrap()
+        );
+
+        let child_clone = Arc::clone(&child);
+        let handle = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            child_clone.kill().unwrap();
+        });
+
+        let result = child.run().unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(result.exit_status, ExitStatus::RE("runtime error: killed by signal 9".into()));
+        assert_eq!(result.exit_reason, ExitReason::Killed { signal: 9 });
+        assert_eq!(result.instructions_used, None);
+        assert_eq!(result.measured_time, None);
+    }
+
+    #[test]
+    fn concurrent_run_test() {
+        let child = Arc::new(
+            Perfjail::new("sleep")
+                .arg("0.1")
+                .spawn()
+                .unwrap()
+        );
+        let child_result: Arc<Mutex<ExecutionResult>> = Arc::new(Mutex::new(ExecutionResult::new()));
+
+        let child_clone = Arc::clone(&child);
+        let child_result_clone = Arc::clone(&child_result);
+        let handle = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            let mut guard = child_result_clone.lock().unwrap();
+            *guard = child_clone.run().unwrap();
+        });
+
+        let result = child.run().unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(*child_result.lock().unwrap(), result);
     }
 }

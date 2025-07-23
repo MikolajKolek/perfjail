@@ -32,7 +32,7 @@ pub(crate) enum WakeupAction {
 }
 
 impl WakeupAction {
-    pub(crate) fn preserve_kill(&self, other: WakeupAction) -> WakeupAction {
+    pub(crate) fn combine(&self, other: WakeupAction) -> WakeupAction {
         if *self == Kill || other == Kill {
             Kill
         } else {

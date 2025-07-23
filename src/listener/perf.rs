@@ -1,7 +1,8 @@
 use crate::listener::{Listener, WakeupAction};
 use crate::process::data::{ExecutionData, ExecutionSettings};
-use cvt::cvt;
-use libc::{__u64, read, ssize_t};
+use crate::process::ExitStatus;
+use cvt::{cvt, cvt_r};
+use libc::{__u64, read};
 use perf_event_open_sys::bindings::{
     perf_event_attr, PERF_COUNT_HW_INSTRUCTIONS, PERF_FLAG_FD_CLOEXEC, PERF_FLAG_FD_NO_GROUP,
     PERF_TYPE_HARDWARE,
@@ -12,7 +13,6 @@ use std::io;
 use std::mem::{size_of_val, zeroed};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::Barrier;
-use crate::process::ExitStatus;
 
 #[derive(Debug)]
 pub(crate) struct PerfListener {
@@ -106,32 +106,13 @@ impl PerfListener {
         let mut instructions_used: i64 = 0;
         
         unsafe {
-            let bytes_read: ssize_t;
-            let mut iterations= 0;
-            loop {
-                iterations += 1;
-                if iterations > 10 {
-                    panic!("Read loop was interrupted too many times");
-                }
-
-                let result = cvt(read(
+            let bytes_read = cvt_r(|| {
+                read(
                     self.perf_fd.as_ref().unwrap().as_raw_fd(),
                     &mut instructions_used as *mut c_long as *mut c_void,
                     size_of_val(&instructions_used),
-                ));
-
-                if let Err(e) = result {
-                    if e.kind() == io::ErrorKind::Interrupted {
-                        continue;
-                    } else {
-                        return Err(e);
-                    }
-                }
-                else if let Ok(result) = result {
-                    bytes_read = result;
-                    break;
-                }
-            }
+                )
+            })?;
 
             if bytes_read != size_of_val(&instructions_used) as isize {
                 panic!("Read returned fewer bytes than requested ({} / {})", bytes_read, size_of_val(&instructions_used));
