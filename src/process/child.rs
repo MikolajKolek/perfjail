@@ -139,14 +139,14 @@ impl JailedChild<'_> {
                         self.context
                             .data
                             .execution_result
-                            .set_exit_result(ExitReason::Exited {
+                            .set_exit_reason(ExitReason::Exited {
                                 exit_status: wait_info.si_status(),
                             });
                     } else {
                         self.context
                             .data
                             .execution_result
-                            .set_exit_result(ExitReason::Killed {
+                            .set_exit_reason(ExitReason::Killed {
                                 signal: wait_info.si_status(),
                             });
                     }

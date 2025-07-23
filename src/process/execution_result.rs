@@ -92,8 +92,12 @@ impl ExecutionResult {
         }
     }
 
-    pub(crate) fn set_exit_result(&mut self, exit_reason: ExitReason) {
-        self.exit_reason = exit_reason
+    pub(crate) fn set_exit_reason(&mut self, exit_reason: ExitReason) {
+        self.exit_reason = exit_reason;
+
+        if let ExitReason::Exited { exit_status } = exit_reason {
+            self.set_exit_status(ExitStatus::RE(format!("runtime error {exit_status}")));
+        }
     }
 
     pub(crate) fn set_instructions_used(&mut self, instructions_used: i64) {
