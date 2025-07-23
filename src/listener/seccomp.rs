@@ -1,3 +1,4 @@
+use std::os::fd::BorrowedFd;
 use crate::listener::Listener;
 use crate::process::data::{ExecutionData, ExecutionSettings};
 use crate::process::error::RunError;
@@ -13,6 +14,10 @@ impl SeccompListener {
 }
 
 impl Listener for SeccompListener {
+    fn get_poll_fds(&mut self) -> Vec<BorrowedFd> {
+        vec![]
+    }
+
     fn on_post_fork_child(
         &mut self,
         _: &ExecutionSettings,

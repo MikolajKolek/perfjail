@@ -127,6 +127,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
 
 [[package]]
+name = "linux-raw-sys"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13d6a630ed4f43c11056af8768c4773df2c43bc780b6d8a46de345c17236c562"
+
+[[package]]
 name = "nix"
 version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -151,9 +157,11 @@ dependencies = [
 name = "perfjail"
 version = "0.1.0"
 dependencies = [
+ "cfg-if",
  "cvt",
  "enumset",
  "libc",
+ "linux-raw-sys",
  "nix",
  "perf-event-open-sys",
  "readonly",
