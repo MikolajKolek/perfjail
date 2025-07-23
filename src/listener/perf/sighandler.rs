@@ -1,30 +1,30 @@
+use crate::util::fixed_map::FixedMap;
 use crate::util::siginfo_ext::siginfo_t_ext;
-use std::hash::RandomState;
+use libc::c_int;
 use std::io::Write;
 use std::mem;
 use std::mem::zeroed;
 use std::os::unix::net::UnixStream;
 use std::ptr::null_mut;
-use std::sync::Once;
-use libc::c_int;
+use std::sync::atomic::AtomicBool;
 
 pub(crate) struct SighandlerState {
     previous_sigrtmin_handler: libc::sigaction,
     previous_sigio_handler: libc::sigaction,
-    pub(crate) perf_fd_map: scc::HashMap<c_int, UnixStream>
+    pub(crate) perf_fd_map: FixedMap
 }
 
-pub(crate) static SIGHANDLER_INIT: Once = Once::new();
+pub(crate) static SIGHANDLER_INIT_STARTED: AtomicBool = AtomicBool::new(false);
 pub(crate) static mut SIGHANDLER_STATE: *mut SighandlerState = null_mut();
 
 
-fn init() {
+fn init(perf_timeout_thread_count: usize) {
     unsafe {
         let state = Box::new(
             SighandlerState {
                 previous_sigrtmin_handler: zeroed(),
                 previous_sigio_handler: zeroed(),
-                perf_fd_map: scc::HashMap::with_hasher(RandomState::new()),
+                perf_fd_map: FixedMap::new(perf_timeout_thread_count * 10, perf_timeout_thread_count),
             }
         );
         SIGHANDLER_STATE = Box::into_raw(state);
@@ -41,8 +41,14 @@ fn init() {
     }
 }
 
-pub(crate) fn init_sighandler() {
-    SIGHANDLER_INIT.call_once(init);
+pub(crate) fn init_sighandler(perf_timeout_thread_count: usize) -> bool {
+    if SIGHANDLER_INIT_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        false
+    }
+    else {
+        init(perf_timeout_thread_count);
+        true
+    }
 }
 
 
@@ -83,20 +89,20 @@ unsafe fn call_previous_handler(
 unsafe extern "C" fn sigrtmin_handler(signum: c_int, info: *mut libc::siginfo_t, ptr: *mut libc::c_void) {
     let state = &*SIGHANDLER_STATE;
 
-    let map_entry = state.perf_fd_map.get(&(*info).si_fd());
-    if let Some(entry) = map_entry {
-        notify(entry.get());
-    }
+    state.perf_fd_map.get_and_write((*info).si_fd());
 
     call_previous_handler(signum, info, ptr, state.previous_sigrtmin_handler);
 }
 
+
 unsafe extern "C" fn sigio_handler(signum: c_int, info: *mut libc::siginfo_t, ptr: *mut libc::c_void) {
     let state = &*SIGHANDLER_STATE;
 
-    state.perf_fd_map.scan(|_, v| {
+    //TODO: fix by implementing something that can do scan
+    /*state.perf_fd_map.scan(|_, v| {
         notify(v);
-    });
+    });*/
+    //panic!("AAAAA");
 
     call_previous_handler(signum, info, ptr, state.previous_sigio_handler);
 }

@@ -1,4 +1,4 @@
-mod sighandler;
+pub(crate) mod sighandler;
 
 use crate::listener::perf::sighandler::SIGHANDLER_STATE;
 use crate::listener::Listener;
@@ -26,16 +26,16 @@ pub(crate) struct PerfListener {
     barrier: Barrier,
     perf_fd: Option<OwnedFd>,
     read_stream: Option<UnixStream>,
+    write_stream: Option<UnixStream>,
 }
 
 impl PerfListener {
     pub(crate) fn new() -> PerfListener {
-        sighandler::init_sighandler();
-
         PerfListener {
             barrier: Barrier::new(2),
             perf_fd: None,
             read_stream: None,
+            write_stream: None,
         }
     }
 }
@@ -97,20 +97,27 @@ impl Listener for PerfListener {
             let (read, write) = UnixStream::pair().unwrap();
             write.set_nonblocking(true).unwrap();
             read.set_nonblocking(true).unwrap();
-            (&*SIGHANDLER_STATE).perf_fd_map.insert(perf_fd, write).unwrap();
+            (&*SIGHANDLER_STATE).perf_fd_map.insert(perf_fd, write.as_raw_fd());
             self.read_stream = Some(read);
+            self.write_stream = Some(write);
 
             self.barrier.wait();
         }
     }
 
-    fn on_post_execute(&mut self, _: &ExecutionSettings, data: &mut ExecutionData) {
-        data.execution_result
-            .set_instructions_used(self.get_instructions_used());
+    fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) {
+        let instructions_used = self.get_instructions_used();
+
+        if settings.instruction_count_limit.is_some() && instructions_used > settings.instruction_count_limit.unwrap() {
+            data.execution_result
+                .set_exit_status(ExitStatus::TLE("time limit exceeded".into()));
+        }
+
+        data.execution_result.set_instructions_used(instructions_used);
 
         if let Some(perf_fd) = &self.perf_fd {
             unsafe {
-                (&*SIGHANDLER_STATE).perf_fd_map.remove(&perf_fd.as_raw_fd());
+                (&*SIGHANDLER_STATE).perf_fd_map.remove(perf_fd.as_raw_fd());
             }
         }
     }

@@ -2,7 +2,7 @@ use libc::size_t;
 use std::io::Error;
 
 pub(crate) mod siginfo_ext;
-mod fixed_map;
+pub(crate) mod fixed_map;
 mod signal_safe_spinlock;
 
 /// The stack size (in bytes) for creating the child process with [`clone`].

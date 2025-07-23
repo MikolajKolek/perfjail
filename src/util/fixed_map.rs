@@ -1,7 +1,7 @@
 use crate::util::signal_safe_spinlock::SignalSafeSpinlock;
 use libc::{c_int, write};
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 struct FixedMapBucketEntry {
@@ -46,7 +46,6 @@ pub(crate) struct FixedMap {
     buckets_ptr: *const FixedMapBucket,
     bucket_count: usize,
     bucket_size: usize,
-    id_counter: AtomicU64,
 }
 
 impl FixedMap {
@@ -74,11 +73,10 @@ impl FixedMap {
             buckets_ptr,
             bucket_count,
             bucket_size,
-            id_counter: AtomicU64::new(0),
         }
     }
 
-    pub(crate) fn insert(&mut self, key: c_int, value: c_int) {
+    pub(crate) fn insert(&self, key: c_int, value: c_int) {
         let hash = self.hash(key);
         let _guard = self.buckets_vec[hash].bucket_modify_mutex.lock().expect("Failed to acquire modify_lock");
 
@@ -87,19 +85,14 @@ impl FixedMap {
         for (i, entry) in self.buckets_vec[hash].values_vec.iter().enumerate().take(length) {
             let entry_key = entry.key.load(Ordering::Acquire);
 
-            if entry_key == key {
-                self.modify_entry(entry, (key, value));
-                return;
-            }
             if entry_key == -1 && first_empty == length {
                 first_empty = i;
+                break;
             }
         }
 
         if first_empty == length {
-            if length == self.bucket_size {
-                panic!("FixedMap bucket is full!");
-            }
+            assert_ne!(length, self.bucket_size, "FixedMap bucket is full");
 
             self.modify_entry(&self.buckets_vec[hash].values_vec[first_empty], (key, value));
             self.buckets_vec[hash].length.store(length + 1, Ordering::Release);
