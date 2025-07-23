@@ -71,9 +71,15 @@ impl Listener for PerfListener {
         self.barrier.wait();
     }
 
-    fn on_post_execute(&mut self, _: &ExecutionSettings, data: &mut ExecutionData) {
-        data.execution_result
-            .set_instructions_used(self.get_instructions_used());
+    fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) {
+        let instructions_used = self.get_instructions_used();
+
+        if settings.instruction_count_limit.is_some() && instructions_used > settings.instruction_count_limit.unwrap() {
+            data.execution_result
+                .set_exit_status(ExitStatus::TLE("time limit exceeded".into()));
+        }
+
+        data.execution_result.set_instructions_used(instructions_used);
     }
 
     fn on_wakeup(
