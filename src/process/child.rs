@@ -210,7 +210,7 @@ pub(crate) extern "C" fn clone_and_execute(memory: *mut c_void) -> *mut c_void {
 
         clone(
                 execute_child,
-                (&mut *context.data.child_stack as *mut c_void).add(CHILD_STACK_SIZE),
+                (context.data.child_stack.as_mut_ptr() as *mut c_void).add(CHILD_STACK_SIZE),
                 CLONE_VM | CLONE_PIDFD | CLONE_VFORK | SIGCHLD,
                 (&mut *context as *mut ExecutionContext) as *mut c_void,
                 &mut context.data.raw_pid_fd as *mut c_int as *mut c_void,
