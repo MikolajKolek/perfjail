@@ -1,19 +1,16 @@
+use crate::listener::WakeupAction;
 use crate::process::data::ExecutionContext;
-use crate::process::error::RunError;
 use crate::process::execution_result::{ExecutionResult, ExitReason};
-use crate::process::ExecuteAction::{Continue, Kill};
 use crate::util::CHILD_STACK_SIZE;
 use cvt::cvt;
 use libc::{clone, id_t, kill, pid_t, siginfo_t, waitid, waitpid, CLD_DUMPED, CLD_EXITED, CLD_KILLED, CLONE_PIDFD, CLONE_VFORK, CLONE_VM, P_PID, SIGCHLD, SIGKILL, WEXITED, WNOHANG, WNOWAIT, WSTOPPED};
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::unistd::{chdir, close, dup2_stderr, dup2_stdin, dup2_stdout, execvp};
-use std::cmp::min;
 use std::ffi::{c_int, c_void};
+use std::io;
 use std::mem::zeroed;
 use std::os::fd::{AsFd, AsRawFd};
-use std::path::PathBuf;
 use std::ptr::null_mut;
-use std::io;
 
 /// Representation of a perfjail child process that's waiting to be run, running or exited.
 ///
@@ -30,13 +27,13 @@ use std::io;
 ///
 /// # Examples
 ///
-/// ```should_panic
+/// ```
 /// use perfjail::process::ExitReason::Exited;
 /// use perfjail::process::ExitStatus::OK;
 /// use perfjail::process::Perfjail;
 ///
-/// let mut child = Perfjail::new("/bin/cat")
-///     .arg("file.txt")
+/// let mut child = Perfjail::new("echo")
+///     .arg("test")
 ///     .spawn()
 ///     .expect("failed to execute child");
 ///
@@ -73,27 +70,21 @@ impl JailedChild<'_> {
     ///     println!("ls command didn't start");
     /// }
     /// ```
-    pub fn run(mut self) -> Result<ExecutionResult, RunError> {
-        self.context.listeners.iter_mut().for_each(|listener| {
-            listener.on_post_fork_parent(&self.context.settings, &mut self.context.data)
-        });
+    pub fn run(mut self) -> io::Result<ExecutionResult> {
+        self.propagate_child_error()?;
+        for listener in &mut self.context.listeners {
+            listener.on_post_clone_parent(&self.context.settings, &mut self.context.data)?;
+        }
 
         loop {
-            let mut timeout: Option<i32> = None;
-            let mut action = Continue;
-            self.context.listeners.iter_mut().for_each(|listener| {
-                let (listener_action, listener_timeout) =
-                    listener.on_wakeup(&self.context.settings, &mut self.context.data);
-                action = action.preserve_kill(listener_action);
+            let mut action = WakeupAction::Continue { next_wakeup: None };
+            for listener in &mut self.context.listeners {
+                action = action.preserve_kill(
+                    listener.on_wakeup(&self.context.settings, &mut self.context.data)?
+                );
+            }
 
-                if let Some(mut timeout) = &timeout {
-                    timeout = min(timeout, listener_timeout.unwrap_or(i32::MAX));
-                } else {
-                    timeout = listener_timeout;
-                }
-            });
-
-            if action == Kill {
+            if action == WakeupAction::Kill {
                 self.kill()?
             }
 
@@ -104,7 +95,7 @@ impl JailedChild<'_> {
             let mut poll_fds = [poll_pid_fd];
             let poll_result = poll(
                 &mut poll_fds,
-                PollTimeout::try_from(timeout.unwrap_or(-1)).unwrap(),
+                PollTimeout::try_from(action.next_wakeup().unwrap_or(-1)).unwrap(),
             );
             if poll_result.is_err() && (poll_result.unwrap_err() == nix::errno::Errno::EINTR || poll_result.unwrap_err() == nix::errno::Errno::EAGAIN) {
                 continue;
@@ -126,9 +117,7 @@ impl JailedChild<'_> {
                 );
             }
 
-            if self.context.data.child_error.is_some() {
-                return Err(self.context.data.child_error.take().unwrap());
-            }
+            self.propagate_child_error()?;
 
             if wait_info.si_code == CLD_EXITED
                 || wait_info.si_code == CLD_KILLED
@@ -156,10 +145,11 @@ impl JailedChild<'_> {
             }
         }
 
-        self.context.listeners.iter_mut().for_each(|listener| {
-            listener.on_post_execute(&self.context.settings, &mut self.context.data)
-        });
+        for listener in &mut self.context.listeners {
+            listener.on_post_execute(&self.context.settings, &mut self.context.data)?;
+        }
 
+        self.propagate_child_error()?;
         Ok(self.context.data.execution_result.clone())
     }
 
@@ -183,8 +173,17 @@ impl JailedChild<'_> {
     /// ```
     pub fn kill(&mut self) -> io::Result<()> {
         unsafe {
-            // The pid is guaranteed to still be valid, even if the child was already killed, as the child process hasn't yet been waited on, and won't be until it's dropped
+            // The pid is guaranteed to still be valid, even if the child was already killed,
+            // as the child process hasn't yet been waited on, and won't be until it's dropped.
             cvt(kill(self.context.data.pid.unwrap(), SIGKILL)).map(|_| ())
+        }
+    }
+
+    fn propagate_child_error(&mut self) -> io::Result<()> {
+        if let Some(e) = self.context.data.child_error.take() {
+            Err(e)
+        } else {
+            Ok(())
         }
     }
 }
@@ -229,16 +228,16 @@ extern "C" fn execute_child(memory: *mut c_void) -> c_int {
     1
 }
 
-fn execute_child_impl(context: &mut ExecutionContext) -> Result<(), RunError> {
+fn execute_child_impl(context: &mut ExecutionContext) -> io::Result<()> {
     context.data.clone_barrier.wait();
     
     context
         .listeners
         .iter_mut()
-        .try_for_each(|listener| listener.on_post_fork_child(&context.settings, &context.data))?;
+        .try_for_each(|listener| listener.on_post_clone_child(&context.settings, &context.data))?;
 
-    if context.settings.working_dir != PathBuf::new() {
-        chdir(&context.settings.working_dir)?;
+    if let Some(working_dir) = context.settings.working_dir.as_ref() {
+        chdir(working_dir)?;
     }
 
     if let Some(stdin_fd) = context.settings.stdin_fd.as_ref() {

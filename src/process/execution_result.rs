@@ -6,12 +6,12 @@ use crate::util::CYCLES_PER_SECOND;
 ///
 /// This struct is used to represent the exit status, exit reason and other information
 /// regarding the termination of a child process. Child processes are created via
-/// the [`Perfjail`](crate::process::Perfjail) struct and their exit status is exposed through the
+/// the [`Perfjail`](crate::process::Perfjail) struct, and their exit status is exposed through the
 /// [`run`](crate::process::JailedChild::run) method of a [`JailedChild`](crate::process::JailedChild) process.
 #[readonly::make]
 #[derive(Clone, Debug)]
 pub struct ExecutionResult {
-    /// Information on whether there were errors or rules violations during the running of the child program.
+    /// Information on whether there were errors during the running of the child program.
     pub exit_status: ExitStatus,
     /// The reason the child exited (whether it exited by itself or was killed by a signal).
     pub exit_reason: ExitReason,
@@ -50,13 +50,19 @@ pub enum ExitStatus {
     OLE(String),
 }
 
-/// Contains information whether the child process returned or was killed.
+/// Contains information on whether the child process returned or was killed.
 #[derive(Clone, Copy, Debug)]
 pub enum ExitReason {
-    /// The child exited with an exit status
-    Exited { exit_status: i32 },
-    /// The child was killed by a signal
-    Killed { signal: i32 },
+    /// The child exited with an exit status.
+    Exited {
+        /// The exit status of the child.
+        exit_status: i32
+    },
+    /// The child was killed by a signal.
+    Killed { 
+        /// The signal that killed the child.
+        signal: i32
+    },
 }
 
 impl ExitStatus {

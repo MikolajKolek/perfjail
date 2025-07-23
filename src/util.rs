@@ -1,4 +1,5 @@
-use libc::size_t;
+use std::io;
+use libc::{c_int, size_t};
 use std::io::Error;
 
 /// The stack size (in bytes) for creating the child process with [`clone`].
@@ -11,4 +12,12 @@ pub(crate) const CYCLES_PER_SECOND: i64 = 2_000_000_000;
 
 pub(crate) fn errno() -> i32 {
     Error::last_os_error().raw_os_error().unwrap()
+}
+
+pub(crate) fn cvt_no_errno(argument: c_int) -> io::Result<()> {
+    if argument == 0 {
+        Ok(())
+    } else {
+        Err(Error::from_raw_os_error(argument))
+    }
 }

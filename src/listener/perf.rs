@@ -1,23 +1,18 @@
-use crate::listener::Listener;
+use crate::listener::{Listener, WakeupAction};
 use crate::process::data::{ExecutionData, ExecutionSettings};
-use crate::process::error::RunError;
-use crate::process::{ExecuteAction, ExitStatus};
-use crate::util::errno;
-use libc::{
-    __u64
-
-    , read,
-};
+use cvt::cvt;
+use libc::{__u64, read, ssize_t};
 use perf_event_open_sys::bindings::{
     perf_event_attr, PERF_COUNT_HW_INSTRUCTIONS, PERF_FLAG_FD_CLOEXEC, PERF_FLAG_FD_NO_GROUP,
     PERF_TYPE_HARDWARE,
 };
 use perf_event_open_sys::perf_event_open;
 use std::ffi::{c_long, c_ulong, c_void};
+use std::io;
 use std::mem::{size_of_val, zeroed};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::Barrier;
-use cvt::cvt;
+use crate::process::ExitStatus;
 
 #[derive(Debug)]
 pub(crate) struct PerfListener {
@@ -35,17 +30,16 @@ impl PerfListener {
 }
 
 impl Listener for PerfListener {
-    fn on_post_fork_child(
+    fn on_post_clone_child(
         &mut self,
         _: &ExecutionSettings,
         _: &ExecutionData,
-    ) -> Result<(), RunError> {
+    ) -> io::Result<()> {
         self.barrier.wait();
-        
         Ok(())
     }
 
-    fn on_post_fork_parent(&mut self, _settings: &ExecutionSettings, data: &mut ExecutionData) {
+    fn on_post_clone_parent(&mut self, _settings: &ExecutionSettings, data: &mut ExecutionData) -> io::Result<()> {
         unsafe {
             let mut attrs: perf_event_attr = zeroed();
             attrs.type_ = PERF_TYPE_HARDWARE;
@@ -64,64 +58,89 @@ impl Listener for PerfListener {
                 -1,
                 -1,
                 (PERF_FLAG_FD_NO_GROUP | PERF_FLAG_FD_CLOEXEC) as c_ulong,
-            )).unwrap();
+            ))?;
             self.perf_fd = Some(OwnedFd::from_raw_fd(perf_fd));
         }
         
         self.barrier.wait();
-    }
-
-    fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) {
-        let instructions_used = self.get_instructions_used();
-
-        if settings.instruction_count_limit.is_some() && instructions_used > settings.instruction_count_limit.unwrap() {
-            data.execution_result
-                .set_exit_status(ExitStatus::TLE("time limit exceeded".into()));
-        }
-
-        data.execution_result.set_instructions_used(instructions_used);
+        Ok(())
     }
 
     fn on_wakeup(
         &mut self,
         settings: &ExecutionSettings,
         data: &mut ExecutionData,
-    ) -> (ExecuteAction, Option<i32>) {
+    ) -> io::Result<WakeupAction>{
         if let Some(instruction_count_limit) = settings.instruction_count_limit {
-            let instructions_used = self.get_instructions_used();
+            let instructions_used = self.get_instructions_used()?;
 
             if instructions_used > instruction_count_limit {
                 data.execution_result
                     .set_exit_status(ExitStatus::TLE("time limit exceeded".into()));
-                (ExecuteAction::Kill, None)
+                Ok(WakeupAction::Kill)
             } else {
-                (ExecuteAction::Continue, Some(1))
+                Ok(WakeupAction::Continue { next_wakeup: Some(1) })
             }
         } else {
-            (ExecuteAction::Continue, None)
+            Ok(WakeupAction::Continue { next_wakeup: None })
         }
+    }
+
+    fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> io::Result<()> {
+        let instructions_used = self.get_instructions_used()?;
+
+        if let Some(instruction_limit) = settings.instruction_count_limit {
+            if instructions_used > instruction_limit {
+                data.execution_result
+                    .set_exit_status(ExitStatus::TLE("time limit exceeded".into()));
+            }
+        }
+
+        data.execution_result.set_instructions_used(instructions_used);
+        Ok(())
     }
 }
 
 impl PerfListener {
-    fn get_instructions_used(&mut self) -> i64 {
+    fn get_instructions_used(&mut self) -> io::Result<i64> {
         let mut instructions_used: i64 = 0;
         
         unsafe {
-            let size = read(
-                self.perf_fd.as_ref().unwrap().as_raw_fd(),
-                &mut instructions_used as *mut c_long as *mut c_void,
-                size_of_val(&instructions_used),
-            );
+            let bytes_read: ssize_t;
+            let mut iterations= 0;
+            loop {
+                iterations += 1;
+                if iterations > 10 {
+                    panic!("Read loop was interrupted too many times");
+                }
 
-            if size != size_of_val(&instructions_used) as isize {
-                panic!("ERROR {} {}\n\n", size, errno());
+                let result = cvt(read(
+                    self.perf_fd.as_ref().unwrap().as_raw_fd(),
+                    &mut instructions_used as *mut c_long as *mut c_void,
+                    size_of_val(&instructions_used),
+                ));
+
+                if let Err(e) = result {
+                    if e.kind() == io::ErrorKind::Interrupted {
+                        continue;
+                    } else {
+                        return Err(e);
+                    }
+                }
+                else if let Ok(result) = result {
+                    bytes_read = result;
+                    break;
+                }
+            }
+
+            if bytes_read != size_of_val(&instructions_used) as isize {
+                panic!("Read returned fewer bytes than requested ({} / {})", bytes_read, size_of_val(&instructions_used));
             }
             if instructions_used < 0 {
-                panic!("ERROR2");
+                panic!("Read returned negative number of instructions used: {instructions_used}");
             }
         }
 
-        instructions_used
+        Ok(instructions_used)
     }
 }

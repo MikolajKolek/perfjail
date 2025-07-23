@@ -1,9 +1,9 @@
 use crate::listener::Listener;
-use crate::process::error::RunError;
 use crate::process::execution_result::ExecutionResult;
 use crate::process::jail::Perfjail;
 use crate::util::CHILD_STACK_SIZE;
 use std::ffi::{c_int, CString};
+use std::io;
 use std::os::fd::{BorrowedFd, OwnedFd};
 use std::path::PathBuf;
 use std::sync::Barrier;
@@ -23,7 +23,7 @@ pub(crate) struct ExecutionSettings<'a> {
     pub(crate) instruction_count_limit: Option<i64>,
     pub(crate) executable_path: CString,
     pub(crate) args: Vec<CString>,
-    pub(crate) working_dir: PathBuf,
+    pub(crate) working_dir: Option<PathBuf>,
     pub(crate) stdin_fd: Option<BorrowedFd<'a>>,
     pub(crate) stdout_fd: Option<BorrowedFd<'a>>,
     pub(crate) stderr_fd: Option<BorrowedFd<'a>>,
@@ -35,7 +35,7 @@ pub(crate) struct ExecutionData {
     pub(crate) raw_pid_fd: c_int,
     pub(crate) pid: Option<c_int>,
     pub(crate) execution_result: ExecutionResult,
-    pub(crate) child_error: Option<RunError>,
+    pub(crate) child_error: Option<io::Error>,
     pub(crate) child_stack: [u8; CHILD_STACK_SIZE],
     pub(crate) clone_barrier: Barrier
 }

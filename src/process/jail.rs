@@ -1,11 +1,10 @@
-use std::ffi::{c_int, c_void, CString, OsStr};
+use enumset::{EnumSet, EnumSetType};
+use libc::{pthread_attr_destroy, pthread_attr_init, pthread_attr_setdetachstate, pthread_attr_t, pthread_create, pthread_t, PTHREAD_CREATE_DETACHED};
+use std::ffi::{c_int, CString, OsStr};
 use std::os::fd::{BorrowedFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fs, io, mem};
-
-use enumset::{EnumSet, EnumSetType};
-use libc::{pthread_attr_destroy, pthread_attr_init, pthread_attr_setdetachstate, pthread_attr_t, pthread_create, pthread_t, PTHREAD_CREATE_DETACHED};
 
 use crate::listener::perf::PerfListener;
 use crate::listener::seccomp::SeccompListener;
@@ -13,7 +12,7 @@ use crate::listener::Listener;
 use crate::process::child::{clone_and_execute, JailedChild};
 use crate::process::data::{ExecutionContext, ExecutionData, ExecutionSettings};
 use crate::process::jail::Feature::PERF;
-use crate::util::CYCLES_PER_SECOND;
+use crate::util::{cvt_no_errno, CYCLES_PER_SECOND};
 
 /// A builder based on [`std::process::Command`] used to configure and spawn perfjail processes.
 ///
@@ -39,7 +38,7 @@ pub struct Perfjail<'a> {
     pub(crate) instruction_count_limit: Option<i64>,
     pub(crate) executable_path: CString,
     pub(crate) args: Vec<CString>,
-    pub(crate) working_dir: PathBuf,
+    pub(crate) working_dir: Option<PathBuf>,
     pub(crate) stdin_fd: Option<BorrowedFd<'a>>,
     pub(crate) stdout_fd: Option<BorrowedFd<'a>>,
     pub(crate) stderr_fd: Option<BorrowedFd<'a>>,
@@ -51,7 +50,7 @@ pub struct Perfjail<'a> {
 pub enum Feature {
     /// Causes perfjail to measure the number of CPU instructions executed
     /// by the child program, allowing for much more accurate time measurement.
-    /// Makes the [`ExecutionResult`](crate::process::ExecutionResult) returned by [`Perfjail::run`]
+    /// Makes the [`ExecutionResult`](crate::process::ExecutionResult) returned by [`JailedChild::run`]
     /// include the [`instructions_used`](crate::process::execution_result::ExecutionResult::instructions_used)
     /// and [`measured_time`](crate::process::execution_result::ExecutionResult::measured_time) fields.
     PERF,
@@ -95,7 +94,7 @@ impl<'a> Perfjail<'a> {
                 .expect("Failed to convert program path to CString"),
             args: vec![CString::new(program.as_ref().as_encoded_bytes())
                 .expect("Failed to convert program path to CString")],
-            working_dir: PathBuf::new(),
+            working_dir: None,
             stdin_fd: None,
             stdout_fd: None,
             stderr_fd: None,
@@ -124,7 +123,7 @@ impl<'a> Perfjail<'a> {
     ///
     /// To pass multiple arguments see [`args`](Perfjail::args).
     ///
-    /// Note that the argument is not passed through a shell, but given literally to the program.
+    /// Note that the argument is not passed through a shell but given literally to the program.
     /// This means that shell syntax like quotes, escaped characters, word splitting, glob patterns,
     /// variable substitution, etc. have no effect.
     ///
@@ -155,7 +154,7 @@ impl<'a> Perfjail<'a> {
     ///
     /// To pass a single argument, see [`arg`](Perfjail::arg).
     ///
-    /// Note that the arguments are not passed through a shell, but given
+    /// Note that the arguments are not passed through a shell but given
     /// literally to the program. This means that shell syntax like quotes,
     /// escaped characters, word splitting, glob patterns, variable substitution, etc.
     /// have no effect.
@@ -192,7 +191,7 @@ impl<'a> Perfjail<'a> {
     /// If the program path is relative (e.g., `"./script.sh"`), it's ambiguous
     /// whether it should be interpreted relative to the parent's working
     /// directory or relative to `current_dir`. The behavior in this case is
-    /// platform specific and unstable, and it's recommended to use
+    /// platform-specific and unstable, and it's recommended to use
     /// [`fs::canonicalize`] to get an absolute program path instead.
     ///
     /// # Examples
@@ -210,7 +209,7 @@ impl<'a> Perfjail<'a> {
     ///     .expect("failed to run ls");
     /// ```
     pub fn current_dir<P: AsRef<Path>>(mut self, dir: P) -> Perfjail<'a> {
-        self.working_dir = PathBuf::from(dir.as_ref().as_os_str());
+        self.working_dir = Some(PathBuf::from(dir.as_ref().as_os_str()));
         self
     }
 
@@ -412,17 +411,19 @@ impl<'a> Perfjail<'a> {
         unsafe {
             let mut attr: pthread_attr_t = mem::zeroed();
             let mut thread: pthread_t = mem::zeroed();
-            pthread_attr_init(&mut attr as *mut pthread_attr_t);
-            pthread_attr_setdetachstate(&mut attr as *mut pthread_attr_t, PTHREAD_CREATE_DETACHED);
-            pthread_create(&mut thread, &attr, clone_and_execute, (&mut *context as *mut ExecutionContext) as *mut c_void);
-            pthread_attr_destroy(&mut attr as *mut pthread_attr_t);
+            cvt_no_errno(pthread_attr_init(&mut attr as _))?;
+            cvt_no_errno(pthread_attr_setdetachstate(&mut attr as _, PTHREAD_CREATE_DETACHED))?;
+            cvt_no_errno(
+                pthread_create(&mut thread, &attr, clone_and_execute, (&mut *context as *mut ExecutionContext) as _)
+            )?;
+            cvt_no_errno(pthread_attr_destroy(&mut attr as _))?;
 
             context.data.clone_barrier.wait();
 
             context.data.pid_fd = Some(OwnedFd::from_raw_fd(context.data.raw_pid_fd));
             context.data.pid = Some(
                 fs::read_to_string(format!("/proc/self/fdinfo/{}", context.data.raw_pid_fd))
-                    .expect("The file descriptor does not exist")
+                    .expect("The pid_fd does not exist")
                     .split("\n")
                     .find(|line| { line.contains("Pid:") })
                     .expect("The file descriptor is not a pidfd")
