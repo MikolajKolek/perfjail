@@ -12,6 +12,12 @@ Currently, the library doesn't include many of sio2jail's sandboxing features, a
 
 The project is also currently very much a work in progress (however, the main functionality does work!), with code that at times can be messy, undocumented and lack error handling, but all that will change before the first full release
 
+# Requirements
+
+Perfjail currently requires the usage of Linux 5.3. This value may decrease as the project evolves further.
+
+Usage of the `setup` module also requires `bash`, `pkexec` and `sysctl`.
+
 # License
 Perfjail is licensed under the [MIT Licence](https://github.com/MikolajKolek/perfjail/blob/master/LICENSE) 
 
