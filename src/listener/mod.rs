@@ -6,6 +6,7 @@ use crate::process::data::{ExecutionData, ExecutionSettings};
 
 pub(crate) mod perf;
 pub(crate) mod seccomp;
+pub(crate) mod time_limit;
 
 pub(crate) trait Listener: Debug {
     fn on_post_clone_child(

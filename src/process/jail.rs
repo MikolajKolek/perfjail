@@ -9,6 +9,7 @@ use std::{fs, io, mem};
 use crate::listener::perf::PerfListener;
 use crate::listener::seccomp::SeccompListener;
 use crate::listener::Listener;
+use crate::listener::time_limit::TimeLimitListener;
 use crate::process::child::{clone_and_execute, JailedChild};
 use crate::process::data::{ExecutionContext, ExecutionData, ExecutionSettings};
 use crate::process::jail::Feature::PERF;
@@ -35,6 +36,9 @@ use crate::util::{cvt_no_errno, CYCLES_PER_SECOND};
 /// processes, as [`Perfjail::spawn`] consumes itself after it's called.
 pub struct Perfjail<'a> {
     pub(crate) real_time_limit: Option<Duration>,
+    pub(crate) user_time_limit: Option<Duration>,
+    pub(crate) system_time_limit: Option<Duration>,
+    pub(crate) user_system_time_limit: Option<Duration>,
     pub(crate) instruction_count_limit: Option<i64>,
     pub(crate) executable_path: CString,
     pub(crate) args: Vec<CString>,
@@ -89,6 +93,9 @@ impl<'a> Perfjail<'a> {
     pub fn new<S: AsRef<OsStr>>(program: S) -> Perfjail<'a> {
         Perfjail {
             real_time_limit: None,
+            user_time_limit: None,
+            system_time_limit: None,
+            user_system_time_limit: None,
             instruction_count_limit: None,
             executable_path: CString::new(program.as_ref().as_encoded_bytes())
                 .expect("Failed to convert program path to CString"),
@@ -319,7 +326,7 @@ impl<'a> Perfjail<'a> {
         self
     }
 
-    /// Sets a limit on how much real time can pass after the child program is executed
+    /// Sets a limit on how much real time the child program can run for
     /// before it is killed and [`ExitStatus::TLE`](crate::process::ExitStatus::TLE) is
     /// returned as the exit status.
     ///
@@ -342,6 +349,84 @@ impl<'a> Perfjail<'a> {
     /// ```
     pub fn real_time_limit(mut self, limit: Duration) -> Perfjail<'a> {
         self.real_time_limit = Some(limit);
+        self
+    }
+
+    /// Sets a limit on how much user time the child program can run for
+    /// before it is killed and [`ExitStatus::TLE`](crate::process::ExitStatus::TLE) is
+    /// returned as the exit status.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use perfjail::process::ExitStatus::TLE;
+    /// use perfjail::process::Perfjail;
+    ///
+    /// let result = Perfjail::new("sleep")
+    ///     .arg("1")
+    ///     .user_time_limit(Duration::from_secs_f64(0.5))
+    ///     .spawn()
+    ///     .expect("failed to spawn child")
+    ///     .run()
+    ///     .expect("failed to run sleep");
+    /// ```
+    pub fn user_time_limit(mut self, limit: Duration) -> Perfjail<'a> {
+        self.user_time_limit = Some(limit);
+        self
+    }
+
+    /// Sets a limit on how much system time the child program can run for
+    /// before it is killed and [`ExitStatus::TLE`](crate::process::ExitStatus::TLE) is
+    /// returned as the exit status.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use perfjail::process::ExitStatus::TLE;
+    /// use perfjail::process::Perfjail;
+    ///
+    /// let result = Perfjail::new("sleep")
+    ///     .arg("1")
+    ///     .system_time_limit(Duration::from_secs_f64(0.5))
+    ///     .spawn()
+    ///     .expect("failed to spawn child")
+    ///     .run()
+    ///     .expect("failed to run sleep");
+    /// ```
+    pub fn system_time_limit(mut self, limit: Duration) -> Perfjail<'a> {
+        self.system_time_limit = Some(limit);
+        self
+    }
+
+    /// Sets a limit on how much total user time and system time the child program can run for
+    /// before it is killed and [`ExitStatus::TLE`](crate::process::ExitStatus::TLE) is
+    /// returned as the exit status.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use perfjail::process::ExitStatus::TLE;
+    /// use perfjail::process::Perfjail;
+    ///
+    /// let result = Perfjail::new("sleep")
+    ///     .arg("1")
+    ///     .user_system_time_limit(Duration::from_secs_f64(0.5))
+    ///     .spawn()
+    ///     .expect("failed to spawn child")
+    ///     .run()
+    ///     .expect("failed to run sleep");
+    /// ```
+    pub fn user_system_time_limit(mut self, limit: Duration) -> Perfjail<'a> {
+        self.user_system_time_limit = Some(limit);
         self
     }
 
@@ -393,7 +478,7 @@ impl<'a> Perfjail<'a> {
     ///     .expect("failed to spawn child process");
     /// ```
     pub fn spawn(self) -> io::Result<JailedChild<'a>> {
-        let listeners = self
+        let mut listeners: Vec<Box<dyn Listener>> = self
             .features
             .iter()
             .map(|feature| match feature {
@@ -401,6 +486,7 @@ impl<'a> Perfjail<'a> {
                 Feature::SECCOMP => Box::new(SeccompListener::new()) as Box<dyn Listener>,
             })
             .collect();
+        listeners.push(Box::new(TimeLimitListener::new()));
 
         let mut context = Box::new(ExecutionContext {
             settings: ExecutionSettings::new(self),

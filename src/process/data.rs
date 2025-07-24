@@ -20,6 +20,9 @@ pub(crate) struct ExecutionContext<'a> {
 #[derive(Debug)]
 pub(crate) struct ExecutionSettings<'a> {
     pub(crate) real_time_limit: Option<Duration>,
+    pub(crate) user_time_limit: Option<Duration>,
+    pub(crate) system_time_limit: Option<Duration>,
+    pub(crate) user_system_time_limit: Option<Duration>,
     pub(crate) instruction_count_limit: Option<i64>,
     pub(crate) executable_path: CString,
     pub(crate) args: Vec<CString>,
@@ -44,6 +47,9 @@ impl ExecutionSettings<'_> {
     pub(crate) fn new(executor: Perfjail) -> ExecutionSettings {
         ExecutionSettings {
             real_time_limit: executor.real_time_limit,
+            user_time_limit: executor.user_time_limit,
+            system_time_limit: executor.system_time_limit,
+            user_system_time_limit: executor.user_system_time_limit,
             instruction_count_limit: executor.instruction_count_limit,
             executable_path: executor.executable_path,
             args: executor.args,

@@ -102,6 +102,7 @@ impl ExecutionResult {
         self.exit_reason = exit_reason;
 
         match exit_reason {
+            ExitReason::Exited { exit_status: 0 } => {}
             ExitReason::Exited { exit_status } =>
                 self.set_exit_status(ExitStatus::RE(format!("runtime error: return value {exit_status}"))),
             ExitReason::Killed { signal } =>
