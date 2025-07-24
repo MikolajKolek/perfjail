@@ -75,7 +75,7 @@ impl<'a> Perfjail<'a> {
     ///
     /// If `program` is not an absolute path, the `PATH` will be searched in an OS-defined way.
     ///
-    /// The search path to be used may be controlled by setting the `PATH` environment variable on the Command.
+    /// The search path to be used may be controlled by setting the `PATH` environment variable.
     ///
     /// # Examples
     ///
@@ -89,6 +89,23 @@ impl<'a> Perfjail<'a> {
     ///     .expect("failed to spawn child")
     ///     .run()
     ///     .expect("failed to run sh");
+    /// ```
+    ///
+    ///
+    /// # Caveats
+    ///
+    /// [`Perfjail::new`] is only intended to accept the path of the program. If you pass a program
+    /// path along with arguments like `Perfjail::new("ls -l")`, it will try to search for
+    /// `ls -l` literally. The arguments need to be passed separately, such as via [`arg`](Perfjail::arg) or
+    /// [`args`](Perfjail::args).
+    ///
+    /// ```no_run
+    /// use perfjail::process::Perfjail;
+    ///
+    /// Perfjail::new("ls")
+    ///     .arg("-l") // arg passed separately
+    ///     .spawn()
+    ///     .expect("ls command failed to start");
     /// ```
     pub fn new<S: AsRef<OsStr>>(program: S) -> Perfjail<'a> {
         Perfjail {
@@ -506,6 +523,7 @@ impl<'a> Perfjail<'a> {
 
             context.data.clone_barrier.wait();
 
+            assert_ne!(context.data.raw_pid_fd, -1);
             context.data.pid_fd = Some(OwnedFd::from_raw_fd(context.data.raw_pid_fd));
             context.data.pid = Some(
                 fs::read_to_string(format!("/proc/self/fdinfo/{}", context.data.raw_pid_fd))

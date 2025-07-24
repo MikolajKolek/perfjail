@@ -65,7 +65,7 @@ impl ExecutionData {
     pub(crate) fn new() -> ExecutionData {
         ExecutionData {
             pid_fd: None,
-            raw_pid_fd: 0,
+            raw_pid_fd: -1,
             pid: None,
             execution_result: ExecutionResult::new(),
             child_error: None,

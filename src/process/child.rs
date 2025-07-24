@@ -63,7 +63,7 @@ unsafe impl Send for JailedChild<'_> {}
 
 impl JailedChild<'_> {
     pub(crate) fn new(context: Box<ExecutionContext>) -> JailedChild {
-        let pid = context.data.pid.unwrap();
+        let pid = context.data.pid.expect("pid not set");
 
         JailedChild {
             child_internals: Mutex::new(ChildInternals { context, run_error: None }),
@@ -111,7 +111,7 @@ impl JailedChild<'_> {
     ///
     /// Basic usage:
     ///
-    /// ```no_run
+    /// ```
     /// use perfjail::process::{ExitReason, Perfjail};
     ///
     /// let jail = Perfjail::new("yes");
@@ -140,10 +140,11 @@ impl ChildInternals<'_> {
         }
 
         unsafe {
-            kill_pid(self.context.data.pid.unwrap()).expect("Failed to kill child process");
+            kill_pid(self.context.data.pid.expect("pid not set")).expect("Failed to kill child process");
 
             let mut child_state = child_state.lock().expect("Failed to lock pid_valid");
             *child_state = Reaped;
+            drop(child_state);
 
             cvt_r(|| { waitpid(
                 self.context.data.pid.unwrap() as id_t as pid_t,
@@ -180,7 +181,7 @@ impl ChildInternals<'_> {
                 &mut poll_fds,
                 PollTimeout::try_from(action.next_wakeup().unwrap_or(-1)).unwrap(),
             );
-            if poll_result.is_err() && (poll_result.unwrap_err() == nix::errno::Errno::EINTR || poll_result.unwrap_err() == nix::errno::Errno::EAGAIN) {
+            if let Err(e) = poll_result && (e == nix::errno::Errno::EINTR || e == nix::errno::Errno::EAGAIN) {
                 continue;
             }
 
