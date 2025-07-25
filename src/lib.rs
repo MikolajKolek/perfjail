@@ -19,6 +19,7 @@ mod tests {
 
     use crate::process::execution_result::ExitReason::Exited;
     use crate::process::{ExecutionResult, ExitReason, ExitStatus};
+    use crate::process::Feature::TIME_MEASUREMENT;
     use crate::process::jail::Feature::PERF;
     use crate::process::jail::Perfjail;
 
@@ -32,7 +33,7 @@ mod tests {
         let child = Perfjail::new("tests/bud")
             .stdin(input_file.as_fd())
             .stdout(output_file.as_fd())
-            .features(PERF)
+            .features(PERF | TIME_MEASUREMENT)
             .measured_time_limit(Duration::from_millis(500))
             .spawn()
             .unwrap();

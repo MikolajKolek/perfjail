@@ -1,14 +1,15 @@
-use std::cmp::min;
-use std::fmt::Debug;
-use std::io;
 use crate::listener::WakeupAction::{Continue, Kill};
 use crate::process::data::{ExecutionData, ExecutionSettings};
+use std::fmt::Debug;
+use std::io;
 
 pub(crate) mod perf;
 pub(crate) mod seccomp;
 pub(crate) mod time_limit;
 
 pub(crate) trait Listener: Debug {
+    fn requires_timeout(&self, settings: &ExecutionSettings) -> bool;
+
     fn on_post_clone_child(
         &mut self,
         settings: &ExecutionSettings,
@@ -28,7 +29,7 @@ pub(crate) trait Listener: Debug {
 
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) enum WakeupAction {
-    Continue { next_wakeup: Option<i32> },
+    Continue,
     Kill,
 }
 
@@ -37,21 +38,7 @@ impl WakeupAction {
         if *self == Kill || other == Kill {
             Kill
         } else {
-            Continue { 
-                next_wakeup: if self.next_wakeup().is_some() || other.next_wakeup().is_some() {
-                    Some(min(self.next_wakeup().unwrap_or(i32::MAX), other.next_wakeup().unwrap_or(i32::MAX)))
-                } else {
-                    None
-                }
-            }
-        }
-    }
-    
-    pub(crate) fn next_wakeup(&self) -> Option<i32> {
-        if let Continue { next_wakeup } = *self {
-            next_wakeup
-        } else {
-            None
+            Continue
         }
     }
 }

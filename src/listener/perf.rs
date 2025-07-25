@@ -30,6 +30,10 @@ impl PerfListener {
 }
 
 impl Listener for PerfListener {
+    fn requires_timeout(&self, settings: &ExecutionSettings) -> bool {
+        settings.instruction_count_limit.is_some()
+    }
+
     fn on_post_clone_child(
         &mut self,
         _: &ExecutionSettings,
@@ -79,10 +83,10 @@ impl Listener for PerfListener {
                     .set_exit_status(ExitStatus::TLE("time limit exceeded".into()));
                 Ok(WakeupAction::Kill)
             } else {
-                Ok(WakeupAction::Continue { next_wakeup: Some(1) })
+                Ok(WakeupAction::Continue)
             }
         } else {
-            Ok(WakeupAction::Continue { next_wakeup: None })
+            Ok(WakeupAction::Continue)
         }
     }
 

@@ -12,6 +12,10 @@ impl SeccompListener {
 }
 
 impl Listener for SeccompListener {
+    fn requires_timeout(&self, _: &ExecutionSettings) -> bool {
+        false
+    }
+
     fn on_post_clone_child(
         &mut self,
         _: &ExecutionSettings,
@@ -29,7 +33,7 @@ impl Listener for SeccompListener {
         _: &ExecutionSettings,
         _: &mut ExecutionData,
     ) -> io::Result<WakeupAction> {
-        Ok(WakeupAction::Continue { next_wakeup: None })
+        Ok(WakeupAction::Continue)
     }
 
     fn on_post_execute(&mut self, _: &ExecutionSettings, _: &mut ExecutionData) -> io::Result<()> {
