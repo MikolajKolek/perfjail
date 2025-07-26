@@ -15,6 +15,21 @@ pub struct ExecutionResult {
     pub exit_status: ExitStatus,
     /// The reason the child exited (whether it exited by itself or was killed by a signal).
     pub exit_reason: ExitReason,
+    /// The amount of real time passed during the execution of the child program.
+    ///
+    /// This value is returned only if the [`TIME_MEASUREMENT`](crate::process::Feature::TIME_MEASUREMENT)
+    /// feature flag is enabled.
+    pub real_time: Option<Duration>,
+    /// The amount of user time passed during the execution of the child program.
+    ///
+    /// This value is returned only if the [`TIME_MEASUREMENT`](crate::process::Feature::TIME_MEASUREMENT)
+    /// feature flag is enabled.
+    pub user_time: Option<Duration>,
+    /// The amount of system time passed during the execution of the child program.
+    ///
+    /// This value is returned only if the [`TIME_MEASUREMENT`](crate::process::Feature::TIME_MEASUREMENT)
+    /// feature flag is enabled.
+    pub system_time: Option<Duration>,
     /// The number of CPU instructions executed by the child program.
     ///
     /// This value is returned only if the [`PERF`](crate::process::Feature::PERF) feature flag is enabled.
@@ -23,12 +38,12 @@ pub struct ExecutionResult {
     ///
     /// This value is returned only if the [`PERF`](crate::process::Feature::PERF) feature flag is enabled.
     pub measured_time: Option<Duration>,
-    /// The amount of real time passed during the execution of the child program.
-    pub real_time: Duration,
-    /// The amount of user time passed during the execution of the child program.
-    pub user_time: Duration,
-    /// The amount of system time passed during the execution of the child program.
-    pub system_time: Duration,
+    /// The peak amount of memory (stack and heap, as measured by the `/proc/<pid>/status` VmPeak value)
+    /// the child has used.
+    ///
+    /// This value is returned only if the [`MEMORY_MEASUREMENT`](crate::process::Feature::MEMORY_MEASUREMENT)
+    /// feature flag is enabled.
+    pub memory_usage_kibibytes: Option<u64>,
 }
 
 /// A list of possible rules violations and run errors that can occur during the running of the child program.
@@ -86,9 +101,10 @@ impl ExecutionResult {
             exit_reason: ExitReason::Exited { exit_status: 0 },
             instructions_used: None,
             measured_time: None,
-            real_time: Duration::ZERO,
-            user_time: Duration::ZERO,
-            system_time: Duration::ZERO,
+            real_time: None,
+            user_time: None,
+            system_time: None,
+            memory_usage_kibibytes: None,
         }
     }
 
@@ -110,6 +126,18 @@ impl ExecutionResult {
         }
     }
 
+    pub(crate) fn set_real_time(&mut self, real_time: Duration) {
+        self.real_time = Some(real_time)
+    }
+
+    pub(crate) fn set_user_time(&mut self, user_time: Duration) {
+        self.user_time = Some(user_time)
+    }
+
+    pub(crate) fn set_system_time(&mut self, system_time: Duration) {
+        self.system_time = Some(system_time)
+    }
+
     pub(crate) fn set_instructions_used(&mut self, instructions_used: i64) {
         self.instructions_used = Some(instructions_used);
         self.measured_time = Some(Duration::from_millis(
@@ -117,15 +145,7 @@ impl ExecutionResult {
         ))
     }
 
-    pub(crate) fn set_real_time(&mut self, real_time: Duration) {
-        self.real_time = real_time
-    }
-
-    pub(crate) fn set_user_time(&mut self, user_time: Duration) {
-        self.user_time = user_time
-    }
-
-    pub(crate) fn set_system_time(&mut self, system_time: Duration) {
-        self.system_time = system_time
+    pub(crate) fn set_memory_usage_kibibytes(&mut self, memory_usage_kibibytes: u64) {
+        self.memory_usage_kibibytes = Some(memory_usage_kibibytes)
     }
 }
