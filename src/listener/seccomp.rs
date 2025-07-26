@@ -1,4 +1,5 @@
 use std::io;
+use nix::sys::wait::WaitStatus;
 use crate::listener::{Listener, WakeupAction};
 use crate::process::data::{ExecutionData, ExecutionSettings};
 
@@ -12,8 +13,12 @@ impl SeccompListener {
 }
 
 impl Listener for SeccompListener {
+    fn requires_timeout(&self, _: &ExecutionSettings) -> bool {
+        false
+    }
+
     fn on_post_clone_child(
-        &mut self,
+        &self,
         _: &ExecutionSettings,
         _: &ExecutionData,
     ) -> io::Result<()> {
@@ -29,7 +34,16 @@ impl Listener for SeccompListener {
         _: &ExecutionSettings,
         _: &mut ExecutionData,
     ) -> io::Result<WakeupAction> {
-        Ok(WakeupAction::Continue { next_wakeup: None })
+        Ok(WakeupAction::Continue)
+    }
+
+    fn on_execute_event(
+        &mut self,
+        _: &ExecutionSettings,
+        _: &mut ExecutionData,
+        _: &WaitStatus
+    ) -> io::Result<WakeupAction> {
+        Ok(WakeupAction::Continue)
     }
 
     fn on_post_execute(&mut self, _: &ExecutionSettings, _: &mut ExecutionData) -> io::Result<()> {

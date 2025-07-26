@@ -40,7 +40,8 @@ pub(crate) struct ExecutionData {
     pub(crate) execution_result: ExecutionResult,
     pub(crate) child_error: Option<io::Error>,
     pub(crate) child_stack: [u8; CHILD_STACK_SIZE],
-    pub(crate) clone_barrier: Barrier
+    pub(crate) child_ready_barrier: Barrier,
+    pub(crate) parent_ready_barrier: Barrier,
 }
 
 impl ExecutionSettings<'_> {
@@ -70,7 +71,8 @@ impl ExecutionData {
             execution_result: ExecutionResult::new(),
             child_error: None,
             child_stack: unsafe { std::mem::zeroed() },
-            clone_barrier: Barrier::new(2)
+            child_ready_barrier: Barrier::new(2),
+            parent_ready_barrier: Barrier::new(2),
         }
     }
 }

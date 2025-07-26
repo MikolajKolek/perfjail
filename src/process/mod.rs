@@ -2,6 +2,7 @@ pub(crate) mod child;
 pub(crate) mod data;
 pub(crate) mod execution_result;
 pub(crate) mod jail;
+pub(crate) mod timeout;
 
 pub use self::child::JailedChild;
 pub use self::execution_result::ExecutionResult;
