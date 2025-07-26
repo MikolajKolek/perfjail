@@ -6,6 +6,7 @@ use libc::{sysconf, _SC_CLK_TCK};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{fs, io};
+use nix::sys::wait::WaitStatus;
 
 static CLOCK_TICKS_PER_SECOND: OnceLock<u64> = OnceLock::new();
 
@@ -46,7 +47,7 @@ impl Listener for TimeLimitListener {
         settings.user_system_time_limit.is_some()
     }
 
-    fn on_post_clone_child(&mut self, _: &ExecutionSettings, _: &ExecutionData) -> io::Result<()> {
+    fn on_post_clone_child(&self, _: &ExecutionSettings, _: &ExecutionData) -> io::Result<()> {
         Ok(())
     }
 
@@ -69,6 +70,15 @@ impl Listener for TimeLimitListener {
         } else {
             Ok(self.verify_time_usage(settings, data, self.get_time_usage(data)?))
         }
+    }
+
+    fn on_execute_event(
+        &mut self,
+        _: &ExecutionSettings,
+        _: &mut ExecutionData,
+        _: &WaitStatus
+    ) -> io::Result<WakeupAction> {
+        Ok(WakeupAction::Continue)
     }
 
     fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> io::Result<()> {

@@ -21,5 +21,6 @@ thiserror = "2.0.12"
 enumset = "1.1.6"
 cvt = "0.1.2"
 readonly = "0.2.13"
-nix = { version = "0.30.1", features = ["poll", "fs", "process", "signal"] }
+nix = { version = "0.30.1", features = ["poll", "fs", "process", "signal", "ptrace"] }
+litemap = "0.8.0"
 linear-map = "1.2.0"

@@ -12,18 +12,16 @@ use std::ffi::{c_long, c_ulong, c_void};
 use std::io;
 use std::mem::{size_of_val, zeroed};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::sync::Barrier;
+use nix::sys::wait::WaitStatus;
 
 #[derive(Debug)]
 pub(crate) struct PerfListener {
-    barrier: Barrier,
     perf_fd: Option<OwnedFd>,
 }
 
 impl PerfListener {
     pub(crate) fn new() -> PerfListener {
         PerfListener {
-            barrier: Barrier::new(2),
             perf_fd: None,
         }
     }
@@ -35,11 +33,10 @@ impl Listener for PerfListener {
     }
 
     fn on_post_clone_child(
-        &mut self,
+        &self,
         _: &ExecutionSettings,
         _: &ExecutionData,
     ) -> io::Result<()> {
-        self.barrier.wait();
         Ok(())
     }
 
@@ -66,7 +63,6 @@ impl Listener for PerfListener {
             self.perf_fd = Some(OwnedFd::from_raw_fd(perf_fd));
         }
         
-        self.barrier.wait();
         Ok(())
     }
 
@@ -88,6 +84,15 @@ impl Listener for PerfListener {
         } else {
             Ok(WakeupAction::Continue)
         }
+    }
+
+    fn on_execute_event(
+        &mut self,
+        _: &ExecutionSettings,
+        _: &mut ExecutionData,
+        _: &WaitStatus
+    ) -> io::Result<WakeupAction> {
+        Ok(WakeupAction::Continue)
     }
 
     fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> io::Result<()> {

@@ -165,6 +165,7 @@ impl ChildInternals<'_> {
         if requires_timeout {
             add_timeout_thread();
         }
+        self.context.data.parent_ready_barrier.wait();
 
         loop {
             let mut action = WakeupAction::Continue;
@@ -189,6 +190,10 @@ impl ChildInternals<'_> {
 
             self.propagate_child_error()?;
 
+            for listener in &mut self.context.listeners {
+                listener.on_execute_event(&self.context.settings, &mut self.context.data, &wait_info)?;
+            }
+            
             match wait_info {
                 WaitStatus::Exited(_, status) => {
                     self.context
@@ -270,8 +275,6 @@ extern "C" fn execute_child(memory: *mut c_void) -> c_int {
 }
 
 fn execute_child_impl(context: &mut ExecutionContext) -> io::Result<()> {
-    context.data.clone_barrier.wait();
-    
     context
         .listeners
         .iter_mut()
@@ -293,6 +296,9 @@ fn execute_child_impl(context: &mut ExecutionContext) -> io::Result<()> {
         dup2_stderr(stderr_fd)?;
         close(stderr_fd.as_raw_fd())?;
     }
+
+    context.data.child_ready_barrier.wait();
+    context.data.parent_ready_barrier.wait();
 
     execvp(&context.settings.executable_path, &context.settings.args)?;
 

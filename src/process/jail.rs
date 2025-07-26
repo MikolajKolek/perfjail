@@ -10,6 +10,7 @@ use crate::listener::perf::PerfListener;
 use crate::listener::seccomp::SeccompListener;
 use crate::listener::Listener;
 use crate::listener::time_limit::TimeLimitListener;
+use crate::listener::ptrace::PtraceListener;
 use crate::process::child::{clone_and_execute, JailedChild};
 use crate::process::data::{ExecutionContext, ExecutionData, ExecutionSettings};
 use crate::util::{cvt_no_errno, CYCLES_PER_SECOND};
@@ -60,10 +61,11 @@ pub enum Feature {
     PERF,
     /// Makes the [`ExecutionResult`](crate::process::ExecutionResult) returned by [`JailedChild::run`]
     /// include the [`real_time`](crate::process::execution_result::ExecutionResult::real_time),
-    /// [`user_time`](crate::process::execution_result::ExecutionResult::user_time) and 
+    /// [`user_time`](crate::process::execution_result::ExecutionResult::user_time) and
     /// [`system_time`](crate::process::execution_result::ExecutionResult::system_time) fields.
     TIME_MEASUREMENT,
     SECCOMP,
+    PTRACE,
 }
 
 #[allow(dead_code)]
@@ -507,6 +509,7 @@ impl<'a> Perfjail<'a> {
                 Feature::PERF => Box::new(PerfListener::new()) as Box<dyn Listener>,
                 Feature::SECCOMP => Box::new(SeccompListener::new()),
                 Feature::TIME_MEASUREMENT => Box::new(TimeLimitListener::new()),
+                Feature::PTRACE => Box::new(PtraceListener::new()),
             })
             .collect();
 
@@ -526,7 +529,7 @@ impl<'a> Perfjail<'a> {
             )?;
             cvt_no_errno(pthread_attr_destroy(&mut attr as _))?;
 
-            context.data.clone_barrier.wait();
+            context.data.child_ready_barrier.wait();
 
             assert_ne!(context.data.raw_pid_fd, -1);
             context.data.pid_fd = Some(OwnedFd::from_raw_fd(context.data.raw_pid_fd));
