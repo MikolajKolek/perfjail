@@ -6,6 +6,7 @@ use nix::fcntl::OFlag;
 use nix::unistd::{close, pipe2, read};
 use std::os::fd::{BorrowedFd, IntoRawFd, RawFd};
 use std::{fs, io};
+use nix::sys::resource::{getrlimit, setrlimit, Resource};
 use nix::sys::wait::WaitStatus;
 use crate::process::ExitStatus;
 
@@ -39,6 +40,13 @@ impl Listener for MemoryLimitListener {
 
     fn on_post_clone_child(&self, _: &ExecutionSettings, _: &ExecutionData) -> io::Result<()> {
         close(self.parent)?;
+
+        // Set address space and stack limits to the highest possible value (usually infinity)
+        let (_, hard_as_limit) = getrlimit(Resource::RLIMIT_AS)?;
+        setrlimit(Resource::RLIMIT_AS, hard_as_limit, hard_as_limit)?;
+        let (_, hard_stack_limit) = getrlimit(Resource::RLIMIT_STACK)?;
+        setrlimit(Resource::RLIMIT_STACK, hard_stack_limit, hard_stack_limit)?;
+
         Ok(())
     }
 
