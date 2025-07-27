@@ -8,8 +8,8 @@ use std::{fs, io, mem};
 
 use crate::listener::perf::PerfListener;
 use crate::listener::Listener;
-use crate::listener::memory::MemoryLimitListener;
-use crate::listener::time_limit::TimeLimitListener;
+use crate::listener::memory::MemoryListener;
+use crate::listener::time::TimeListener;
 use crate::listener::ptrace::PtraceListener;
 use crate::process::child::{clone_and_execute, JailedChild};
 use crate::process::data::{ExecutionContext, ExecutionData, ExecutionSettings};
@@ -524,7 +524,7 @@ impl<'a> Perfjail<'a> {
     ///
     /// let result = Perfjail::new("sleep")
     ///     .arg("1")
-    ///     .memory_limit_kibibytes(8192) // 8 MB
+    ///     .memory_limit_kibibytes(8192) // 8 MiB
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
@@ -558,9 +558,9 @@ impl<'a> Perfjail<'a> {
             .iter()
             .map(|feature| match feature {
                 Feature::PERF => vec![Box::new(PerfListener::new()) as Box<dyn Listener>],
-                Feature::TIME_MEASUREMENT => vec![Box::new(TimeLimitListener::new()) as Box<dyn Listener>],
+                Feature::TIME_MEASUREMENT => vec![Box::new(TimeListener::new()) as Box<dyn Listener>],
                 Feature::MEMORY_MEASUREMENT => vec![
-                    Box::new(MemoryLimitListener::new()) as Box<dyn Listener>,
+                    Box::new(MemoryListener::new()) as Box<dyn Listener>,
                     Box::new(PtraceListener::new()) as Box<dyn Listener>
                 ],
             })

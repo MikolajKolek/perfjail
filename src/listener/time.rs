@@ -21,25 +21,25 @@ struct ProcessTimeUsage {
 }
 
 #[derive(Debug)]
-pub(crate) struct TimeLimitListener {
+pub(crate) struct TimeListener {
     real_time_start: Option<Instant>,
     time_limit_set: bool
 }
 
-impl TimeLimitListener {
-    pub(crate) fn new() -> TimeLimitListener {
+impl TimeListener {
+    pub(crate) fn new() -> TimeListener {
         CLOCK_TICKS_PER_SECOND.get_or_init(|| {
             (unsafe { cvt(sysconf(_SC_CLK_TCK)).expect("Failed to read _SC_CLK_TCK") } as u64)
         });
 
-        TimeLimitListener {
+        TimeListener {
             real_time_start: None,
             time_limit_set: false
         }
     }
 }
 
-impl Listener for TimeLimitListener {
+impl Listener for TimeListener {
     fn requires_timeout(&self, settings: &ExecutionSettings) -> bool {
         settings.real_time_limit.is_some() ||
         settings.user_time_limit.is_some() ||
@@ -96,7 +96,7 @@ impl Listener for TimeLimitListener {
     }
 }
 
-impl TimeLimitListener {
+impl TimeListener {
     /// This function can only be called when at least one of the time limits is set
     fn verify_time_usage(
         &self,

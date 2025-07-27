@@ -5,7 +5,7 @@ use std::io;
 use nix::sys::wait::WaitStatus;
 
 pub(crate) mod perf;
-pub(crate) mod time_limit;
+pub(crate) mod time;
 pub(crate) mod ptrace;
 pub(crate) mod memory;
 

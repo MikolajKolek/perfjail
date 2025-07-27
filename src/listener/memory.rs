@@ -11,20 +11,20 @@ use nix::sys::wait::WaitStatus;
 use crate::process::ExitStatus;
 
 #[derive(Debug)]
-pub(crate) struct MemoryLimitListener {
+pub(crate) struct MemoryListener {
     child: RawFd,
     parent: RawFd,
     closed_child_in_parent: bool,
     peak_memory_kibibytes: u64,
 }
 
-impl MemoryLimitListener {
+impl MemoryListener {
     pub(crate) fn new() -> Self {
         let (read, write) = pipe2(OFlag::O_CLOEXEC | OFlag::O_NONBLOCK).expect(
             "Failed to create pipe for memory limit listener",
         );
 
-        MemoryLimitListener {
+        MemoryListener {
             child: write.into_raw_fd(),
             parent: read.into_raw_fd(),
             closed_child_in_parent: false,
@@ -33,7 +33,7 @@ impl MemoryLimitListener {
     }
 }
 
-impl Listener for MemoryLimitListener {
+impl Listener for MemoryListener {
     fn requires_timeout(&self, settings: &ExecutionSettings) -> bool {
         settings.memory_limit_kibibytes.is_some()
     }
@@ -59,7 +59,7 @@ impl Listener for MemoryLimitListener {
     fn on_wakeup(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> io::Result<WakeupAction> {
         if self.was_exec_called() {
             self.peak_memory_kibibytes = self.peak_memory_kibibytes.max(
-                MemoryLimitListener::get_peak_memory_usage(data).unwrap_or(0)
+                MemoryListener::get_peak_memory_usage(data).unwrap_or(0)
             );
 
             if let Some(limit) = settings.memory_limit_kibibytes && self.peak_memory_kibibytes > limit {
@@ -85,7 +85,7 @@ impl Listener for MemoryLimitListener {
     }
 }
 
-impl Drop for MemoryLimitListener {
+impl Drop for MemoryListener {
     // We only concern ourselves with drop for the parent, as the
     // listener won't be dropped in the child
     fn drop(&mut self) {
@@ -97,7 +97,7 @@ impl Drop for MemoryLimitListener {
     }
 }
 
-impl MemoryLimitListener {
+impl MemoryListener {
     fn was_exec_called(&self) -> bool {
         let mut buf = [0u8; 1];
 
