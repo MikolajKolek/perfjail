@@ -69,7 +69,6 @@ pub enum Feature {
     /// [`memory_usage_kibibytes`](crate::process::execution_result::ExecutionResult::memory_usage_kibibytes),
     /// field.
     MEMORY_MEASUREMENT,
-    PTRACE,
 }
 
 #[allow(dead_code)]
@@ -558,11 +557,14 @@ impl<'a> Perfjail<'a> {
             .features
             .iter()
             .map(|feature| match feature {
-                Feature::PERF => Box::new(PerfListener::new()) as Box<dyn Listener>,
-                Feature::TIME_MEASUREMENT => Box::new(TimeLimitListener::new()),
-                Feature::MEMORY_MEASUREMENT => Box::new(MemoryLimitListener::new()),
-                Feature::PTRACE => Box::new(PtraceListener::new()),
+                Feature::PERF => vec![Box::new(PerfListener::new()) as Box<dyn Listener>],
+                Feature::TIME_MEASUREMENT => vec![Box::new(TimeLimitListener::new()) as Box<dyn Listener>],
+                Feature::MEMORY_MEASUREMENT => vec![
+                    Box::new(MemoryLimitListener::new()) as Box<dyn Listener>,
+                    Box::new(PtraceListener::new()) as Box<dyn Listener>
+                ],
             })
+            .flatten()
             .collect();
 
         let mut context = Box::new(ExecutionContext {

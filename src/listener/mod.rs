@@ -20,13 +20,6 @@ pub(crate) trait Listener: Debug {
 
     fn on_post_clone_parent(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> io::Result<()>;
 
-    /// Triggers after the child's initial execve, only when PtraceListener is active
-    fn on_post_exec(
-        &mut self,
-        settings: &ExecutionSettings,
-        data: &mut ExecutionData,
-    ) -> io::Result<WakeupAction>;
-
     fn on_wakeup(
         &mut self,
         settings: &ExecutionSettings,
@@ -40,13 +33,6 @@ pub(crate) trait Listener: Debug {
         event: &WaitStatus
     ) -> io::Result<WakeupAction>;
 
-    fn on_trace_event(
-        &mut self,
-        settings: &ExecutionSettings,
-        data: &mut ExecutionData,
-        event: &WaitStatus,
-    ) -> io::Result<WakeupAction>;
-    
     fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> io::Result<()>;
 }
 
