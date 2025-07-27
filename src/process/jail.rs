@@ -7,8 +7,8 @@ use std::time::Duration;
 use std::{fs, io, mem};
 
 use crate::listener::perf::PerfListener;
-use crate::listener::seccomp::SeccompListener;
 use crate::listener::Listener;
+use crate::listener::memory::MemoryLimitListener;
 use crate::listener::time_limit::TimeLimitListener;
 use crate::listener::ptrace::PtraceListener;
 use crate::process::child::{clone_and_execute, JailedChild};
@@ -40,6 +40,7 @@ pub struct Perfjail<'a> {
     pub(crate) system_time_limit: Option<Duration>,
     pub(crate) user_system_time_limit: Option<Duration>,
     pub(crate) instruction_count_limit: Option<i64>,
+    pub(crate) memory_limit_kibibytes: Option<u64>,
     pub(crate) executable_path: CString,
     pub(crate) args: Vec<CString>,
     pub(crate) working_dir: Option<PathBuf>,
@@ -64,7 +65,10 @@ pub enum Feature {
     /// [`user_time`](crate::process::execution_result::ExecutionResult::user_time) and
     /// [`system_time`](crate::process::execution_result::ExecutionResult::system_time) fields.
     TIME_MEASUREMENT,
-    SECCOMP,
+    /// Makes the [`ExecutionResult`](crate::process::ExecutionResult) returned by [`JailedChild::run`] include the
+    /// [`memory_usage_kibibytes`](crate::process::execution_result::ExecutionResult::memory_usage_kibibytes),
+    /// field.
+    MEMORY_MEASUREMENT,
     PTRACE,
 }
 
@@ -121,6 +125,7 @@ impl<'a> Perfjail<'a> {
             system_time_limit: None,
             user_system_time_limit: None,
             instruction_count_limit: None,
+            memory_limit_kibibytes: None,
             executable_path: CString::new(program.as_ref().as_encoded_bytes())
                 .expect("Failed to convert program path to CString"),
             args: vec![CString::new(program.as_ref().as_encoded_bytes())
@@ -335,11 +340,11 @@ impl<'a> Perfjail<'a> {
     ///
     /// ```
     /// use std::time::Duration;
-    /// use perfjail::process::Feature::{PERF, SECCOMP};
+    /// use perfjail::process::Feature::{PERF, MEMORY_MEASUREMENT};
     /// use perfjail::process::Perfjail;
     ///
     /// Perfjail::new("ls")
-    ///     .features(PERF | SECCOMP)
+    ///     .features(PERF | MEMORY_MEASUREMENT)
     ///     .spawn()
     ///     .expect("failed to spawn child")
     ///     .run()
@@ -353,6 +358,10 @@ impl<'a> Perfjail<'a> {
     /// Sets a limit on how much real time the child program can run for
     /// before it is killed and [`ExitStatus::TLE`](crate::process::ExitStatus::TLE) is
     /// returned as the exit status.
+    ///
+    /// Setting a real time limit also automatically enables the
+    /// [`TIME_MEASUREMENT`](Feature::TIME_MEASUREMENT) feature flag,
+    /// working the same way as if it was added using the [`features`](Perfjail::features) method.
     ///
     /// # Examples
     ///
@@ -380,6 +389,10 @@ impl<'a> Perfjail<'a> {
     /// before it is killed and [`ExitStatus::TLE`](crate::process::ExitStatus::TLE) is
     /// returned as the exit status.
     ///
+    /// Setting a user time limit also automatically enables the
+    /// [`TIME_MEASUREMENT`](Feature::TIME_MEASUREMENT) feature flag,
+    /// working the same way as if it was added using the [`features`](Perfjail::features) method.
+    ///
     /// # Examples
     ///
     /// Basic usage:
@@ -405,6 +418,10 @@ impl<'a> Perfjail<'a> {
     /// Sets a limit on how much system time the child program can run for
     /// before it is killed and [`ExitStatus::TLE`](crate::process::ExitStatus::TLE) is
     /// returned as the exit status.
+    ///
+    /// Setting a system time limit also automatically enables the
+    /// [`TIME_MEASUREMENT`](Feature::TIME_MEASUREMENT) feature flag,
+    /// working the same way as if it was added using the [`features`](Perfjail::features) method.
     ///
     /// # Examples
     ///
@@ -432,6 +449,10 @@ impl<'a> Perfjail<'a> {
     /// before it is killed and [`ExitStatus::TLE`](crate::process::ExitStatus::TLE) is
     /// returned as the exit status.
     ///
+    /// Setting a user+system time limit also automatically enables the
+    /// [`TIME_MEASUREMENT`](Feature::TIME_MEASUREMENT) feature flag,
+    /// working the same way as if it was added using the [`features`](Perfjail::features) method.
+    ///
     /// # Examples
     ///
     /// Basic usage:
@@ -458,7 +479,8 @@ impl<'a> Perfjail<'a> {
     /// before it is killed and [`ExitStatus::TLE`](crate::process::ExitStatus::TLE) is
     /// returned as the exit status.
     ///
-    /// Setting a measured time limit also automatically enables the [`PERF`](PERF) feature flag, working the same way as if it was added using the [`features`](Perfjail::features) method.
+    /// Setting a measured time limit also automatically enables the [`PERF`](Feature::PERF) feature flag,
+    /// working the same way as if it was added using the [`features`](Perfjail::features) method.
     ///
     /// # Examples
     ///
@@ -481,6 +503,36 @@ impl<'a> Perfjail<'a> {
         self.instruction_count_limit =
             Some((limit.as_millis() * ((CYCLES_PER_SECOND / 1_000) as u128)) as i64);
         self = self.features(Feature::PERF);
+        self
+    }
+
+    /// Sets a limit on how much memory (as described in
+    /// [`ExecutionResult::memory_usage_kibibytes`](crate::process::ExecutionResult::memory_usage_kibibytes))
+    /// the child program can use at its peak before it is killed and
+    /// [`ExitStatus::TLE`](crate::process::ExitStatus::MLE) is returned as the exit status.
+    ///
+    /// Setting a measured time limit also automatically enables the [`MEMORY_MEASUREMENT`](Feature::MEMORY_MEASUREMENT)
+    /// feature flag, working the same way as if it was added using the [`features`](Perfjail::features) method.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use perfjail::process::ExitStatus::TLE;
+    /// use perfjail::process::Perfjail;
+    ///
+    /// let result = Perfjail::new("sleep")
+    ///     .arg("1")
+    ///     .memory_limit_kibibytes(8192) // 8 MB
+    ///     .spawn()
+    ///     .expect("failed to spawn child")
+    ///     .run()
+    ///     .expect("failed to run sleep");
+    /// ```
+    pub fn memory_limit_kibibytes(mut self, limit: u64) -> Perfjail<'a> {
+        self.memory_limit_kibibytes = Some(limit);
         self
     }
 
@@ -507,8 +559,8 @@ impl<'a> Perfjail<'a> {
             .iter()
             .map(|feature| match feature {
                 Feature::PERF => Box::new(PerfListener::new()) as Box<dyn Listener>,
-                Feature::SECCOMP => Box::new(SeccompListener::new()),
                 Feature::TIME_MEASUREMENT => Box::new(TimeLimitListener::new()),
+                Feature::MEMORY_MEASUREMENT => Box::new(MemoryLimitListener::new()),
                 Feature::PTRACE => Box::new(PtraceListener::new()),
             })
             .collect();

@@ -5,9 +5,9 @@ use std::io;
 use nix::sys::wait::WaitStatus;
 
 pub(crate) mod perf;
-pub(crate) mod seccomp;
 pub(crate) mod time_limit;
 pub(crate) mod ptrace;
+pub(crate) mod memory;
 
 pub(crate) trait Listener: Debug {
     fn requires_timeout(&self, settings: &ExecutionSettings) -> bool;
