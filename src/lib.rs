@@ -8,6 +8,7 @@ pub mod setup;
 
 mod listener;
 mod util;
+mod seccomp;
 
 #[cfg(test)]
 mod tests {

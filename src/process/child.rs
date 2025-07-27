@@ -2,15 +2,16 @@ use crate::listener::WakeupAction;
 use crate::process::child::ChildState::{Reapable, Reaped};
 use crate::process::data::ExecutionContext;
 use crate::process::execution_result::{ExecutionResult, ExitReason};
+use crate::process::timeout::{add_timeout_thread, remove_timeout_thread};
 use crate::util::{kill_pid, CHILD_STACK_SIZE};
 use cvt::{cvt, cvt_r};
-use libc::{clone, id_t, pid_t, siginfo_t, waitid, waitpid, CLD_DUMPED, CLD_EXITED, CLD_KILLED, CLONE_PIDFD, CLONE_VFORK, CLONE_VM, P_PID, SIGCHLD, WEXITED, WNOHANG, WNOWAIT, WSTOPPED};
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
-use nix::unistd::{chdir, close, dup2_stderr, dup2_stdin, dup2_stdout, execvp};
+use libc::{clone, id_t, pid_t, waitpid, CLONE_PIDFD, CLONE_VFORK, CLONE_VM, SIGCHLD, WNOHANG};
+use nix::errno::Errno;
+use nix::sys::wait::{Id, WaitPidFlag, WaitStatus};
+use nix::unistd::{chdir, close, dup2_stderr, dup2_stdin, dup2_stdout, execvp, Pid};
 use std::ffi::{c_int, c_void};
 use std::io;
-use std::mem::zeroed;
-use std::os::fd::{AsFd, AsRawFd};
+use std::os::fd::AsRawFd;
 use std::ptr::null_mut;
 use std::sync::{Mutex, Once};
 
@@ -156,12 +157,18 @@ impl ChildInternals<'_> {
 
     fn run(&mut self) -> io::Result<()> {
         self.propagate_child_error()?;
+        let mut requires_timeout = false;
         for listener in &mut self.context.listeners {
             listener.on_post_clone_parent(&self.context.settings, &mut self.context.data)?;
+            requires_timeout = requires_timeout.max(listener.requires_timeout(&self.context.settings));
         }
+        if requires_timeout {
+            add_timeout_thread();
+        }
+        self.context.data.parent_ready_barrier.wait();
 
         loop {
-            let mut action = WakeupAction::Continue { next_wakeup: None };
+            let mut action = WakeupAction::Continue;
             for listener in &mut self.context.listeners {
                 action = action.combine(
                     listener.on_wakeup(&self.context.settings, &mut self.context.data)?
@@ -172,58 +179,52 @@ impl ChildInternals<'_> {
                 kill_pid(self.context.data.pid.unwrap())?
             }
 
-            let poll_pid_fd = PollFd::new(
-                self.context.data.pid_fd.as_ref().unwrap().as_fd(),
-                PollFlags::POLLIN,
-            );
-            let mut poll_fds = [poll_pid_fd];
-            let poll_result = poll(
-                &mut poll_fds,
-                PollTimeout::try_from(action.next_wakeup().unwrap_or(-1)).unwrap(),
-            );
-            if let Err(e) = poll_result && (e == nix::errno::Errno::EINTR || e == nix::errno::Errno::EAGAIN) {
-                continue;
-            }
-
-            let poll_result = poll_result?;
-            if poll_result == 0 {
-                // This means that one of the listeners' timeouts has finished,
-                // and we need to call all the on_wakeup functions again
-                continue;
-            }
-
-            let mut wait_info: siginfo_t = unsafe { zeroed() };
-            unsafe {
-                cvt_r(|| { waitid(
-                    P_PID,
-                    self.context.data.pid.unwrap() as id_t,
-                    &mut wait_info as *mut siginfo_t,
-                    WEXITED | WSTOPPED | WNOWAIT,
-                )})?;
-            }
+            let wait_info = match nix::sys::wait::waitid(
+                Id::Pid(Pid::from_raw(self.context.data.pid.unwrap())),
+                WaitPidFlag::WEXITED | WaitPidFlag::WSTOPPED | WaitPidFlag::WNOWAIT
+            )  {
+                Ok(r) => r,
+                Err(Errno::EINTR) => continue,
+                Err(errno) => Err(errno)?,
+            };
 
             self.propagate_child_error()?;
 
-            if wait_info.si_code == CLD_EXITED {
-                self.context
-                    .data
-                    .execution_result
-                    .set_exit_reason(ExitReason::Exited {
-                        exit_status: unsafe { wait_info.si_status() },
-                    });
-
-                break;
+            for listener in &mut self.context.listeners {
+                listener.on_execute_event(&self.context.settings, &mut self.context.data, &wait_info)?;
             }
-            if wait_info.si_code == CLD_KILLED || wait_info.si_code == CLD_DUMPED {
-                self.context
-                    .data
-                    .execution_result
-                    .set_exit_reason(ExitReason::Killed {
-                        signal: unsafe { wait_info.si_status() },
-                    });
+            
+            match wait_info {
+                WaitStatus::Exited(_, status) => {
+                    self.context
+                        .data
+                        .execution_result
+                        .set_exit_reason(ExitReason::Exited {
+                            exit_status: status,
+                        });
 
-                break;
+                    break;
+                }
+                WaitStatus::Signaled(_, signal, _) => {
+                    self.context
+                        .data
+                        .execution_result
+                        .set_exit_reason(ExitReason::Killed {
+                            signal: signal as i32,
+                        });
+
+                    break;
+                }
+                WaitStatus::Stopped(_, _) => continue,
+                WaitStatus::PtraceEvent(_, _, _) => continue,
+                WaitStatus::PtraceSyscall(_) => continue,
+                WaitStatus::Continued(_) => continue,
+                WaitStatus::StillAlive => panic!("shouldn't happen")
             }
+        }
+
+        if requires_timeout {
+            remove_timeout_thread();
         }
 
         for listener in &mut self.context.listeners {
@@ -274,8 +275,6 @@ extern "C" fn execute_child(memory: *mut c_void) -> c_int {
 }
 
 fn execute_child_impl(context: &mut ExecutionContext) -> io::Result<()> {
-    context.data.clone_barrier.wait();
-    
     context
         .listeners
         .iter_mut()
@@ -297,6 +296,9 @@ fn execute_child_impl(context: &mut ExecutionContext) -> io::Result<()> {
         dup2_stderr(stderr_fd)?;
         close(stderr_fd.as_raw_fd())?;
     }
+
+    context.data.child_ready_barrier.wait();
+    context.data.parent_ready_barrier.wait();
 
     execvp(&context.settings.executable_path, &context.settings.args)?;
 

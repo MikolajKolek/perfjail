@@ -10,6 +10,7 @@ use crate::listener::perf::PerfListener;
 use crate::listener::Listener;
 use crate::listener::memory::MemoryLimitListener;
 use crate::listener::time_limit::TimeLimitListener;
+use crate::listener::ptrace::PtraceListener;
 use crate::process::child::{clone_and_execute, JailedChild};
 use crate::process::data::{ExecutionContext, ExecutionData, ExecutionSettings};
 use crate::util::{cvt_no_errno, CYCLES_PER_SECOND};
@@ -556,10 +557,14 @@ impl<'a> Perfjail<'a> {
             .features
             .iter()
             .map(|feature| match feature {
-                Feature::PERF => Box::new(PerfListener::new()) as Box<dyn Listener>,
-                Feature::TIME_MEASUREMENT => Box::new(TimeLimitListener::new()),
-                Feature::MEMORY_MEASUREMENT => Box::new(MemoryLimitListener::new()),
+                Feature::PERF => vec![Box::new(PerfListener::new()) as Box<dyn Listener>],
+                Feature::TIME_MEASUREMENT => vec![Box::new(TimeLimitListener::new()) as Box<dyn Listener>],
+                Feature::MEMORY_MEASUREMENT => vec![
+                    Box::new(MemoryLimitListener::new()) as Box<dyn Listener>,
+                    Box::new(PtraceListener::new()) as Box<dyn Listener>
+                ],
             })
+            .flatten()
             .collect();
 
         let mut context = Box::new(ExecutionContext {
@@ -578,7 +583,7 @@ impl<'a> Perfjail<'a> {
             )?;
             cvt_no_errno(pthread_attr_destroy(&mut attr as _))?;
 
-            context.data.clone_barrier.wait();
+            context.data.child_ready_barrier.wait();
 
             assert_ne!(context.data.raw_pid_fd, -1);
             context.data.pid_fd = Some(OwnedFd::from_raw_fd(context.data.raw_pid_fd));

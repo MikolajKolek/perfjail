@@ -6,6 +6,7 @@ use nix::fcntl::OFlag;
 use nix::unistd::{close, pipe2, read};
 use std::os::fd::{BorrowedFd, IntoRawFd, RawFd};
 use std::{fs, io};
+use nix::sys::wait::WaitStatus;
 use crate::process::ExitStatus;
 
 #[derive(Debug)]
@@ -32,7 +33,11 @@ impl MemoryLimitListener {
 }
 
 impl Listener for MemoryLimitListener {
-    fn on_post_clone_child(&mut self, _: &ExecutionSettings, _: &ExecutionData) -> io::Result<()> {
+    fn requires_timeout(&self, settings: &ExecutionSettings) -> bool {
+        settings.memory_limit_kibibytes.is_some()
+    }
+
+    fn on_post_clone_child(&self, _: &ExecutionSettings, _: &ExecutionData) -> io::Result<()> {
         close(self.parent)?;
         Ok(())
     }
@@ -55,10 +60,11 @@ impl Listener for MemoryLimitListener {
             }
         }
 
-        Ok(Continue {
-            // Maps a memory limit to 1, and no memory limit to None
-            next_wakeup: settings.memory_limit_kibibytes.map(|_| 1)
-        })
+        Ok(Continue)
+    }
+
+    fn on_execute_event(&mut self, _: &ExecutionSettings, _: &mut ExecutionData, _: &WaitStatus) -> io::Result<WakeupAction> {
+        Ok(Continue)
     }
 
     fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> io::Result<()> {
