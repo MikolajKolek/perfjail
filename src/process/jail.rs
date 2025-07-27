@@ -550,7 +550,9 @@ impl<'a> Perfjail<'a> {
     ///
     /// Perfjail::new("ls")
     ///     .spawn()
-    ///     .expect("failed to spawn child process");
+    ///     .expect("failed to spawn child process")
+    ///     .run()
+    ///     .expect("failed to run ls");
     /// ```
     pub fn spawn(self) -> io::Result<JailedChild<'a>> {
         let listeners: Vec<Box<dyn Listener>> = self
