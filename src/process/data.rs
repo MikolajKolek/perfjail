@@ -1,18 +1,18 @@
 use crate::listener::Listener;
 use crate::process::execution_result::ExecutionResult;
 use crate::process::jail::Perfjail;
-use crate::util::CHILD_STACK_SIZE;
 use std::ffi::{c_int, CString};
-use std::io;
-use std::os::fd::{BorrowedFd, OwnedFd};
+use std::os::fd::BorrowedFd;
+use std::os::raw::c_void;
 use std::path::PathBuf;
-use std::sync::Barrier;
 use std::time::Duration;
+use sync_linux_no_libc::sync::Barrier;
+use crate::util::atomic_once_lock::AtomicOnceLock;
 
 #[derive(Debug)]
 pub(crate) struct ExecutionContext<'a> {
     pub(crate) settings: ExecutionSettings<'a>,
-    pub(crate) data: ExecutionData,
+    pub(crate) data: SharedData,
     pub(crate) listeners: Vec<Box<dyn Listener>>,
 }
 
@@ -34,15 +34,17 @@ pub(crate) struct ExecutionSettings<'a> {
 }
 
 #[derive(Debug)]
-pub(crate) struct ExecutionData {
-    pub(crate) pid_fd: Option<OwnedFd>,
-    pub(crate) raw_pid_fd: c_int,
-    pub(crate) pid: Option<c_int>,
-    pub(crate) execution_result: ExecutionResult,
-    pub(crate) child_error: Option<io::Error>,
-    pub(crate) child_stack: [u8; CHILD_STACK_SIZE],
+pub(crate) struct SharedData {
+    pub(crate) child_error: AtomicOnceLock<nix::Error>,
     pub(crate) child_ready_barrier: Barrier,
     pub(crate) parent_ready_barrier: Barrier,
+}
+
+#[derive(Debug)]
+pub(crate) struct ParentData {
+    pub(crate) child_stack: Box<c_void>,
+    pub(crate) pid: c_int,
+    pub(crate) execution_result: ExecutionResult,
 }
 
 impl ExecutionSettings<'_> {
@@ -64,15 +66,10 @@ impl ExecutionSettings<'_> {
     }
 }
 
-impl ExecutionData {
-    pub(crate) fn new() -> ExecutionData {
-        ExecutionData {
-            pid_fd: None,
-            raw_pid_fd: -1,
-            pid: None,
-            execution_result: ExecutionResult::new(),
-            child_error: None,
-            child_stack: unsafe { std::mem::zeroed() },
+impl SharedData {
+    pub(crate) fn new() -> SharedData {
+        SharedData {
+            child_error: AtomicOnceLock::new(),
             child_ready_barrier: Barrier::new(2),
             parent_ready_barrier: Barrier::new(2),
         }

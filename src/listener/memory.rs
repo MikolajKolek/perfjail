@@ -1,21 +1,23 @@
 use crate::listener::WakeupAction::{Continue, Kill};
 use crate::listener::{Listener, WakeupAction};
-use crate::process::data::{ExecutionData, ExecutionSettings};
+use crate::process::data::{ExecutionContext, ExecutionSettings, ParentData};
+use crate::process::ExitStatus;
+use libc::c_int;
 use nix::errno::Errno;
 use nix::fcntl::OFlag;
-use nix::unistd::{close, pipe2, read};
-use std::os::fd::{BorrowedFd, IntoRawFd, RawFd};
-use std::{fs, io};
 use nix::sys::resource::{getrlimit, setrlimit, Resource};
 use nix::sys::wait::WaitStatus;
-use crate::process::ExitStatus;
+use nix::unistd::{close, pipe2, read};
+use std::cell::UnsafeCell;
+use std::os::fd::{BorrowedFd, IntoRawFd, RawFd};
+use std::{fs, io};
 
 #[derive(Debug)]
 pub(crate) struct MemoryListener {
     child: RawFd,
     parent: RawFd,
-    closed_child_in_parent: bool,
-    peak_memory_kibibytes: u64,
+    closed_child_in_parent: UnsafeCell<bool>,
+    peak_memory_kibibytes: UnsafeCell<u64>,
 }
 
 impl MemoryListener {
@@ -27,8 +29,8 @@ impl MemoryListener {
         MemoryListener {
             child: write.into_raw_fd(),
             parent: read.into_raw_fd(),
-            closed_child_in_parent: false,
-            peak_memory_kibibytes: 0,
+            closed_child_in_parent: UnsafeCell::new(false),
+            peak_memory_kibibytes: UnsafeCell::new(0),
         }
     }
 }
@@ -38,7 +40,7 @@ impl Listener for MemoryListener {
         settings.memory_limit_kibibytes.is_some()
     }
 
-    fn on_post_clone_child(&self, _: &ExecutionSettings, _: &ExecutionData) -> io::Result<()> {
+    fn on_post_clone_child(&self, _: &ExecutionContext) -> nix::Result<()> {
         close(self.parent)?;
 
         // Set address space and stack limits to the highest possible value (usually infinity)
@@ -50,20 +52,26 @@ impl Listener for MemoryListener {
         Ok(())
     }
 
-    fn on_post_clone_parent(&mut self, _: &ExecutionSettings, _: &mut ExecutionData) -> io::Result<()> {
+    fn on_post_clone_parent(&self, _: &ExecutionContext, _: &mut ParentData) -> io::Result<()> {
         close(self.child)?;
-        self.closed_child_in_parent = true;
+
+        unsafe {
+            *self.closed_child_in_parent.get() = true;
+        }
+
         Ok(())
     }
 
-    fn on_wakeup(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> io::Result<WakeupAction> {
+    fn on_wakeup(&self, context: &ExecutionContext, parent_data: &mut ParentData) -> io::Result<WakeupAction> {
         if self.was_exec_called() {
-            self.peak_memory_kibibytes = self.peak_memory_kibibytes.max(
-                MemoryListener::get_peak_memory_usage(data).unwrap_or(0)
-            );
+            unsafe {
+                *self.peak_memory_kibibytes.get() = (*self.peak_memory_kibibytes.get()).max(
+                    MemoryListener::get_peak_memory_usage(parent_data.pid).unwrap_or(0)
+                );
+            }
 
-            if let Some(limit) = settings.memory_limit_kibibytes && self.peak_memory_kibibytes > limit {
-                data.execution_result.set_exit_status(ExitStatus::MLE("memory limit exceeded".into()));
+            if let Some(limit) = context.settings.memory_limit_kibibytes && unsafe { *self.peak_memory_kibibytes.get() } > limit {
+                parent_data.execution_result.set_exit_status(ExitStatus::MLE("memory limit exceeded".into()));
                 return Ok(Kill)
             }
         }
@@ -71,14 +79,14 @@ impl Listener for MemoryListener {
         Ok(Continue)
     }
 
-    fn on_execute_event(&mut self, _: &ExecutionSettings, _: &mut ExecutionData, _: &WaitStatus) -> io::Result<WakeupAction> {
+    fn on_execute_event(&self, _: &ExecutionContext, _: &mut ParentData, _: &WaitStatus) -> io::Result<WakeupAction> {
         Ok(Continue)
     }
 
-    fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> io::Result<()> {
-        data.execution_result.set_memory_usage_kibibytes(self.peak_memory_kibibytes);
-        if let Some(limit) = settings.memory_limit_kibibytes && self.peak_memory_kibibytes > limit {
-            data.execution_result.set_exit_status(ExitStatus::MLE("memory limit exceeded".into()));
+    fn on_post_execute(&self, context: &ExecutionContext, parent_data: &mut ParentData) -> io::Result<()> {
+        parent_data.execution_result.set_memory_usage_kibibytes(unsafe { *self.peak_memory_kibibytes.get() });
+        if let Some(limit) = context.settings.memory_limit_kibibytes && unsafe { *self.peak_memory_kibibytes.get() } > limit {
+            parent_data.execution_result.set_exit_status(ExitStatus::MLE("memory limit exceeded".into()));
         }
 
         Ok(())
@@ -89,7 +97,7 @@ impl Drop for MemoryListener {
     // We only concern ourselves with drop for the parent, as the
     // listener won't be dropped in the child
     fn drop(&mut self) {
-        if !self.closed_child_in_parent {
+        if !unsafe { *self.closed_child_in_parent.get() } {
             close(self.child).expect("Failed to close child pipe");
         }
 
@@ -111,9 +119,9 @@ impl MemoryListener {
         }
     }
 
-    fn get_peak_memory_usage(data: &ExecutionData) -> Option<u64> {
+    fn get_peak_memory_usage(pid: c_int) -> Option<u64> {
         let status =
-            fs::read_to_string(format!("/proc/{}/status", data.pid.expect("pid not set")))
+            fs::read_to_string(format!("/proc/{}/status", pid))
             .expect("Failed to read /proc/<pid>/status");
 
         if let Some(peak) =

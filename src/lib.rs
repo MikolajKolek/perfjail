@@ -1,3 +1,4 @@
+#![feature(unsafe_cell_access)]
 #![warn(missing_docs)]
 //! A library for supervising the execution of programs in algorithmic competitions, inspired by sio2jail - a tool used by the Polish Olympiad in Informatics
 
@@ -8,7 +9,6 @@ pub mod setup;
 
 mod listener;
 mod util;
-mod seccomp;
 
 #[cfg(test)]
 mod tests {

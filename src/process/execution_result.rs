@@ -1,5 +1,4 @@
 use std::time::Duration;
-
 use crate::util::CYCLES_PER_SECOND;
 
 /// Describes the result of a perfjail child process execution after it has terminated.

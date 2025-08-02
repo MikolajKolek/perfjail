@@ -1,12 +1,13 @@
 use crate::listener::{Listener, WakeupAction};
-use crate::process::data::{ExecutionData, ExecutionSettings};
+use crate::process::data::{ExecutionContext, ExecutionSettings, ParentData};
 use crate::process::ExitStatus;
 use cvt::cvt;
-use libc::{sysconf, _SC_CLK_TCK};
+use libc::{c_int, sysconf, _SC_CLK_TCK};
+use nix::sys::wait::WaitStatus;
+use std::cell::UnsafeCell;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{fs, io};
-use nix::sys::wait::WaitStatus;
 
 static CLOCK_TICKS_PER_SECOND: OnceLock<u64> = OnceLock::new();
 
@@ -22,8 +23,8 @@ struct ProcessTimeUsage {
 
 #[derive(Debug)]
 pub(crate) struct TimeListener {
-    real_time_start: Option<Instant>,
-    time_limit_set: bool
+    real_time_start: UnsafeCell<Option<Instant>>,
+    time_limit_set: UnsafeCell<bool>
 }
 
 impl TimeListener {
@@ -33,8 +34,8 @@ impl TimeListener {
         });
 
         TimeListener {
-            real_time_start: None,
-            time_limit_set: false
+            real_time_start: UnsafeCell::new(None),
+            time_limit_set: UnsafeCell::new(false)
         }
     }
 }
@@ -47,49 +48,51 @@ impl Listener for TimeListener {
         settings.user_system_time_limit.is_some()
     }
 
-    fn on_post_clone_child(&self, _: &ExecutionSettings, _: &ExecutionData) -> io::Result<()> {
+    fn on_post_clone_child(&self, _: &ExecutionContext) -> nix::Result<()> {
         Ok(())
     }
 
-    fn on_post_clone_parent(&mut self, settings: &ExecutionSettings, _: &mut ExecutionData) -> io::Result<()> {
+    fn on_post_clone_parent(&self, context: &ExecutionContext, _: &mut ParentData) -> io::Result<()> {
         // Sio2jail also sets this value here, even if it's slightly inaccurate.
-        self.real_time_start = Some(Instant::now());
+        unsafe {
+            let _ = self.real_time_start.as_mut_unchecked().insert(Instant::now());
 
-        self.time_limit_set =
-            settings.real_time_limit.is_some() ||
-            settings.user_time_limit.is_some() ||
-            settings.system_time_limit.is_some() ||
-            settings.user_system_time_limit.is_some();
+            *self.time_limit_set.get() =
+                context.settings.real_time_limit.is_some() ||
+                    context.settings.user_time_limit.is_some() ||
+                    context.settings.system_time_limit.is_some() ||
+                    context.settings.user_system_time_limit.is_some();
+        }
 
         Ok(())
     }
 
-    fn on_wakeup(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> io::Result<WakeupAction> {
-        if !self.time_limit_set {
+    fn on_wakeup(&self, context: &ExecutionContext, parent_data: &mut ParentData) -> io::Result<WakeupAction> {
+        if !unsafe { *self.time_limit_set.as_ref_unchecked() } {
             Ok(WakeupAction::Continue)
         } else {
-            Ok(self.verify_time_usage(settings, data, self.get_time_usage(data)?))
+            Ok(self.verify_time_usage(context, parent_data, self.get_time_usage(parent_data.pid)?))
         }
     }
 
     fn on_execute_event(
-        &mut self,
-        _: &ExecutionSettings,
-        _: &mut ExecutionData,
+        &self,
+        _: &ExecutionContext, 
+        _: &mut ParentData,
         _: &WaitStatus
     ) -> io::Result<WakeupAction> {
         Ok(WakeupAction::Continue)
     }
 
-    fn on_post_execute(&mut self, settings: &ExecutionSettings, data: &mut ExecutionData) -> io::Result<()> {
-        let time_usage = self.get_time_usage(data)?;
+    fn on_post_execute(&self, context: &ExecutionContext, parent_data: &mut ParentData) -> io::Result<()> {
+        let time_usage = self.get_time_usage(parent_data.pid)?;
 
-        data.execution_result.set_real_time(time_usage.real_time);
-        data.execution_result.set_user_time(time_usage.process_time_usage.user_time);
-        data.execution_result.set_system_time(time_usage.process_time_usage.system_time);
+        parent_data.execution_result.set_real_time(time_usage.real_time);
+        parent_data.execution_result.set_user_time(time_usage.process_time_usage.user_time);
+        parent_data.execution_result.set_system_time(time_usage.process_time_usage.system_time);
 
-        if self.time_limit_set {
-            self.verify_time_usage(settings, data, time_usage);
+        if unsafe { *self.time_limit_set.as_ref_unchecked() } {
+            self.verify_time_usage(context, parent_data, time_usage);
         }
 
         Ok(())
@@ -99,38 +102,38 @@ impl Listener for TimeListener {
 impl TimeListener {
     /// This function can only be called when at least one of the time limits is set
     fn verify_time_usage(
-        &self,
-        settings: &ExecutionSettings,
-        data: &mut ExecutionData,
+        &self, 
+        context: &ExecutionContext,
+        parent_data: &mut ParentData,
         time_usage: TimeUsage
     ) -> WakeupAction {
-        if let Some(limit) = settings.real_time_limit
+        if let Some(limit) = context.settings.real_time_limit
             && time_usage.real_time > limit {
 
-            data.execution_result.set_exit_status(ExitStatus::TLE("real time limit exceeded".into()));
+            parent_data.execution_result.set_exit_status(ExitStatus::TLE("real time limit exceeded".into()));
             WakeupAction::Kill
-        } else if let Some(limit) = settings.user_time_limit &&
+        } else if let Some(limit) = context.settings.user_time_limit &&
             time_usage.process_time_usage.user_time > limit {
 
-            data.execution_result.set_exit_status(ExitStatus::TLE("user time limit exceeded".into()));
+            parent_data.execution_result.set_exit_status(ExitStatus::TLE("user time limit exceeded".into()));
             WakeupAction::Kill
-        } else if let Some(limit) = settings.system_time_limit &&
+        } else if let Some(limit) = context.settings.system_time_limit &&
             time_usage.process_time_usage.system_time > limit {
 
-            data.execution_result.set_exit_status(ExitStatus::TLE("system time limit exceeded".into()));
+            parent_data.execution_result.set_exit_status(ExitStatus::TLE("system time limit exceeded".into()));
             WakeupAction::Kill
-        } else if let Some(limit) = settings.user_system_time_limit &&
+        } else if let Some(limit) = context.settings.user_system_time_limit &&
             time_usage.process_time_usage.user_time + time_usage.process_time_usage.system_time > limit {
 
-            data.execution_result.set_exit_status(ExitStatus::TLE("user+system time limit exceeded".into()));
+            parent_data.execution_result.set_exit_status(ExitStatus::TLE("user+system time limit exceeded".into()));
             WakeupAction::Kill
         } else {
             WakeupAction::Continue
         }
     }
 
-    fn get_process_time_usage(&self, data: &ExecutionData) -> io::Result<ProcessTimeUsage> {
-        let stat = fs::read_to_string(format!("/proc/{}/stat", data.pid.expect("pid not set")))?;
+    fn get_process_time_usage(&self, pid: c_int) -> io::Result<ProcessTimeUsage> {
+        let stat = fs::read_to_string(format!("/proc/{}/stat", pid))?;
         let mut split_stat = stat.split_whitespace();
 
         let user_time_ticks = split_stat.nth(13)
@@ -149,12 +152,14 @@ impl TimeListener {
     }
 
     fn get_real_time_usage(&self) -> Duration {
-        Instant::now() - self.real_time_start.expect("real_time_start not set")
+        unsafe {
+            Instant::now() - self.real_time_start.as_ref_unchecked().unwrap().clone()
+        }
     }
 
-    fn get_time_usage(&self, data: &ExecutionData) -> io::Result<TimeUsage> {
+    fn get_time_usage(&self, pid: c_int) -> io::Result<TimeUsage> {
         Ok(TimeUsage {
-            process_time_usage: self.get_process_time_usage(data)?,
+            process_time_usage: self.get_process_time_usage(pid)?,
             real_time: self.get_real_time_usage(),
         })
     }

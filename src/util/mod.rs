@@ -3,6 +3,8 @@ use libc::{c_int, pid_t, size_t, SIGKILL};
 use std::io::Error;
 use cvt::cvt;
 
+pub(crate) mod atomic_once_lock;
+
 /// The stack size (in bytes) for creating the child process with [`clone`].
 ///
 /// The standard Linux process stack size is usually 8MB, but the process we create consumes practically no memory, so the stack size can be greatly decreased here.

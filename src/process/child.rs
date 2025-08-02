@@ -1,19 +1,23 @@
-use crate::listener::WakeupAction;
 use crate::process::child::ChildState::{Reapable, Reaped};
-use crate::process::data::ExecutionContext;
-use crate::process::execution_result::{ExecutionResult, ExitReason};
-use crate::process::timeout::{add_timeout_thread, remove_timeout_thread};
-use crate::util::{kill_pid, CHILD_STACK_SIZE};
-use cvt::{cvt, cvt_r};
-use libc::{clone, id_t, pid_t, waitpid, CLONE_PIDFD, CLONE_VFORK, CLONE_VM, SIGCHLD, WNOHANG};
-use nix::errno::Errno;
-use nix::sys::wait::{Id, WaitPidFlag, WaitStatus};
+use crate::process::data::{ExecutionContext, ParentData};
+use crate::process::execution_result::ExecutionResult;
+use crate::util::kill_pid;
+use cvt::cvt_r;
+use libc::id_t;
+use libc::waitpid;
+use libc::WNOHANG;
+use libc::pid_t;
 use nix::unistd::{chdir, close, dup2_stderr, dup2_stdin, dup2_stdout, execvp, Pid};
 use std::ffi::{c_int, c_void};
-use std::io;
 use std::os::fd::AsRawFd;
 use std::ptr::null_mut;
 use std::sync::{Mutex, Once};
+use std::io;
+use nix::errno::Errno;
+use nix::sys::wait::{Id, WaitPidFlag, WaitStatus};
+use crate::listener::WakeupAction;
+use crate::process::ExitReason;
+use crate::process::timeout::{add_timeout_thread, remove_timeout_thread};
 
 enum ChildState {
     Reapable { pid: pid_t },
@@ -54,20 +58,35 @@ pub struct JailedChild<'a> {
     run_once: Once
 }
 
-struct ChildInternals<'a> {
-    context: Box<ExecutionContext<'a>>,
+impl<'a> Drop for JailedChild<'a> {
+    fn drop(&mut self) {
+        self.kill().expect("Failed to kill child process in JailedChild::drop");
+    }
+}
+
+pub(crate) struct ChildInternals<'a> {
+    context: &'a ExecutionContext<'a>,
+    parent_data: ParentData,
     run_error: Option<io::Error>,
+}
+
+impl<'a> Drop for ChildInternals<'a> {
+    fn drop(&mut self) {
+        unsafe {
+            drop(Box::from_raw(self.context as *const ExecutionContext as *mut ExecutionContext))
+        }
+    }
 }
 
 unsafe impl Sync for JailedChild<'_> {}
 unsafe impl Send for JailedChild<'_> {}
 
 impl JailedChild<'_> {
-    pub(crate) fn new(context: Box<ExecutionContext>) -> JailedChild {
-        let pid = context.data.pid.expect("pid not set");
+    pub(crate) fn new<'a>(context: &'a ExecutionContext, parent_data: ParentData) -> JailedChild<'a> {
+        let pid = parent_data.pid;
 
         JailedChild {
-            child_internals: Mutex::new(ChildInternals { context, run_error: None }),
+            child_internals: Mutex::new(ChildInternals { context, parent_data, run_error: None }),
             child_state: Mutex::new(Reapable { pid }),
             run_once: Once::new(),
         }
@@ -100,7 +119,7 @@ impl JailedChild<'_> {
         if let Some(e) = (&mut child_internals).run_error.take() {
             Err(e)
         } else {
-            Ok(child_internals.context.data.execution_result.clone())
+            Ok(child_internals.parent_data.execution_result.clone())
         }
     }
 
@@ -135,20 +154,20 @@ impl JailedChild<'_> {
 }
 
 impl ChildInternals<'_> {
-    pub(crate) fn run_saving_result(&mut self, child_state: &Mutex<ChildState>) {
+    fn run_saving_result(&mut self, child_state: &Mutex<ChildState>) {
         if let Err(e) = self.run() {
             _ = self.run_error.insert(e);
         }
 
         unsafe {
-            kill_pid(self.context.data.pid.expect("pid not set")).expect("Failed to kill child process");
+            kill_pid(self.parent_data.pid).expect("Failed to kill child process");
 
             let mut child_state = child_state.lock().expect("Failed to lock pid_valid");
             *child_state = Reaped;
             drop(child_state);
 
             cvt_r(|| { waitpid(
-                self.context.data.pid.unwrap() as id_t as pid_t,
+                self.parent_data.pid as id_t as pid_t,
                 null_mut::<c_int>(),
                 WNOHANG,
             )}).expect("Failed to clean up child process");
@@ -158,8 +177,8 @@ impl ChildInternals<'_> {
     fn run(&mut self) -> io::Result<()> {
         self.propagate_child_error()?;
         let mut requires_timeout = false;
-        for listener in &mut self.context.listeners {
-            listener.on_post_clone_parent(&self.context.settings, &mut self.context.data)?;
+        for listener in &self.context.listeners {
+            listener.on_post_clone_parent(&self.context, &mut self.parent_data)?;
             requires_timeout = requires_timeout.max(listener.requires_timeout(&self.context.settings));
         }
         if requires_timeout {
@@ -169,18 +188,18 @@ impl ChildInternals<'_> {
 
         loop {
             let mut action = WakeupAction::Continue;
-            for listener in &mut self.context.listeners {
+            for listener in &self.context.listeners {
                 action = action.combine(
-                    listener.on_wakeup(&self.context.settings, &mut self.context.data)?
+                    listener.on_wakeup(&self.context, &mut self.parent_data)?
                 );
             }
 
             if action == WakeupAction::Kill {
-                kill_pid(self.context.data.pid.unwrap())?
+                kill_pid(self.parent_data.pid)?
             }
 
             let wait_info = match nix::sys::wait::waitid(
-                Id::Pid(Pid::from_raw(self.context.data.pid.unwrap())),
+                Id::Pid(Pid::from_raw(self.parent_data.pid)),
                 WaitPidFlag::WEXITED | WaitPidFlag::WSTOPPED | WaitPidFlag::WNOWAIT
             )  {
                 Ok(r) => r,
@@ -190,14 +209,13 @@ impl ChildInternals<'_> {
 
             self.propagate_child_error()?;
 
-            for listener in &mut self.context.listeners {
-                listener.on_execute_event(&self.context.settings, &mut self.context.data, &wait_info)?;
+            for listener in &self.context.listeners {
+                listener.on_execute_event(&self.context, &mut self.parent_data, &wait_info)?;
             }
             
             match wait_info {
                 WaitStatus::Exited(_, status) => {
-                    self.context
-                        .data
+                    self.parent_data
                         .execution_result
                         .set_exit_reason(ExitReason::Exited {
                             exit_status: status,
@@ -206,8 +224,7 @@ impl ChildInternals<'_> {
                     break;
                 }
                 WaitStatus::Signaled(_, signal, _) => {
-                    self.context
-                        .data
+                    self.parent_data
                         .execution_result
                         .set_exit_reason(ExitReason::Killed {
                             signal: signal as i32,
@@ -227,8 +244,8 @@ impl ChildInternals<'_> {
             remove_timeout_thread();
         }
 
-        for listener in &mut self.context.listeners {
-            listener.on_post_execute(&self.context.settings, &mut self.context.data)?;
+        for listener in &self.context.listeners {
+            listener.on_post_execute(&self.context, &mut self.parent_data)?;
         }
 
         self.propagate_child_error()?;
@@ -236,49 +253,28 @@ impl ChildInternals<'_> {
     }
 
     fn propagate_child_error(&mut self) -> io::Result<()> {
-        if let Some(e) = self.context.data.child_error.take() {
-            Err(e)
+        if let Some(e) = self.context.data.child_error.get() {
+            Err(e.clone().into())
         } else {
             Ok(())
         }
     }
 }
 
-pub(crate) extern "C" fn clone_and_execute(memory: *mut c_void) -> *mut c_void {
-    unsafe {
-        let context_ptr = memory as *mut ExecutionContext;
-        let context = &mut (*context_ptr);
+pub(crate) extern "C" fn execute_child(memory: *mut c_void) -> c_int {
+    let context_ptr = memory as *const c_void as *const ExecutionContext;
+    let context = unsafe { &(*context_ptr) };
 
-        let result = cvt(clone(
-                execute_child,
-                (context.data.child_stack.as_mut_ptr() as *mut c_void).add(CHILD_STACK_SIZE),
-                CLONE_VM | CLONE_PIDFD | CLONE_VFORK | SIGCHLD,
-                (&mut *context as *mut ExecutionContext) as *mut c_void,
-                &mut context.data.raw_pid_fd as *mut c_int as *mut c_void,
-        ));
-        
-        if let Err(e) = result {
-            context.data.child_error = Some(e);
-        }
-        
-        null_mut()
-    }
-}
-
-extern "C" fn execute_child(memory: *mut c_void) -> c_int {
-    let context_ptr = memory as *mut ExecutionContext;
-    let context = unsafe { &mut (*context_ptr) };
-
-    context.data.child_error = Some(execute_child_impl(context).unwrap_err());
+    context.data.child_error.set(execute_child_impl(context).unwrap_err());
 
     1
 }
 
-fn execute_child_impl(context: &mut ExecutionContext) -> io::Result<()> {
+fn execute_child_impl(context: &ExecutionContext) -> nix::Result<()> {
     context
         .listeners
-        .iter_mut()
-        .try_for_each(|listener| listener.on_post_clone_child(&context.settings, &context.data))?;
+        .iter()
+        .try_for_each(|listener| listener.on_post_clone_child(&context))?;
 
     if let Some(working_dir) = context.settings.working_dir.as_ref() {
         chdir(working_dir)?;
