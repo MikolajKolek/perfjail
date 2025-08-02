@@ -1,19 +1,19 @@
+use crate::listener::memory::MemoryListener;
+use crate::listener::perf::PerfListener;
+use crate::listener::ptrace::PtraceListener;
+use crate::listener::time::TimeListener;
+use crate::listener::Listener;
+use crate::process::data::{ExecutionContext, ExecutionSettings, ParentData, SharedData};
+use crate::process::{ExecutionResult, JailedChild};
+use crate::util::{CHILD_STACK_SIZE, CYCLES_PER_SECOND};
+use cvt::cvt;
 use enumset::{EnumSet, EnumSetType};
-use libc::{pthread_attr_destroy, pthread_attr_init, pthread_attr_setdetachstate, pthread_attr_t, pthread_create, pthread_t, PTHREAD_CREATE_DETACHED};
-use std::ffi::{c_int, CString, OsStr};
-use std::os::fd::{BorrowedFd, FromRawFd, OwnedFd};
+use libc::{clone, malloc, CLONE_VM, SIGCHLD};
+use std::ffi::{c_void, CString, OsStr};
+use std::os::fd::BorrowedFd;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use std::{fs, io, mem};
-
-use crate::listener::perf::PerfListener;
-use crate::listener::Listener;
-use crate::listener::memory::MemoryListener;
-use crate::listener::time::TimeListener;
-use crate::listener::ptrace::PtraceListener;
-use crate::process::child::{clone_and_execute, JailedChild};
-use crate::process::data::{ExecutionContext, ExecutionData, ExecutionSettings};
-use crate::util::{cvt_no_errno, CYCLES_PER_SECOND};
+use std::{io};
 
 /// A builder based on [`std::process::Command`] used to configure and spawn perfjail processes.
 ///
@@ -550,9 +550,7 @@ impl<'a> Perfjail<'a> {
     ///
     /// Perfjail::new("ls")
     ///     .spawn()
-    ///     .expect("failed to spawn child process")
-    ///     .run()
-    ///     .expect("failed to run ls");
+    ///     .expect("failed to spawn child process");
     /// ```
     pub fn spawn(self) -> io::Result<JailedChild<'a>> {
         let listeners: Vec<Box<dyn Listener>> = self
@@ -569,41 +567,33 @@ impl<'a> Perfjail<'a> {
             .flatten()
             .collect();
 
-        let mut context = Box::new(ExecutionContext {
+        let context = Box::new(ExecutionContext {
             settings: ExecutionSettings::new(self),
-            data: ExecutionData::new(),
+            data: SharedData::new(),
             listeners,
         });
+        let context = Box::leak(context) as &ExecutionContext;
 
         unsafe {
-            let mut attr: pthread_attr_t = mem::zeroed();
-            let mut thread: pthread_t = mem::zeroed();
-            cvt_no_errno(pthread_attr_init(&mut attr as _))?;
-            cvt_no_errno(pthread_attr_setdetachstate(&mut attr as _, PTHREAD_CREATE_DETACHED))?;
-            cvt_no_errno(
-                pthread_create(&mut thread, &attr, clone_and_execute, (&mut *context as *mut ExecutionContext) as _)
-            )?;
-            cvt_no_errno(pthread_attr_destroy(&mut attr as _))?;
+            let mut child_stack = Box::from_raw(malloc(CHILD_STACK_SIZE));
+
+            let pid = cvt(clone(
+                crate::process::child::execute_child,
+                (child_stack.as_mut() as *mut c_void).add(CHILD_STACK_SIZE),
+                CLONE_VM | SIGCHLD,
+                (&*context as *const ExecutionContext) as *mut c_void,
+            )).expect("clone call failed");
 
             context.data.child_ready_barrier.wait();
 
-            assert_ne!(context.data.raw_pid_fd, -1);
-            context.data.pid_fd = Some(OwnedFd::from_raw_fd(context.data.raw_pid_fd));
-            context.data.pid = Some(
-                fs::read_to_string(format!("/proc/self/fdinfo/{}", context.data.raw_pid_fd))
-                    .expect("The pid_fd does not exist")
-                    .split("\n")
-                    .find(|line| { line.contains("Pid:") })
-                    .expect("The file descriptor is not a pidfd")
-                    .split_whitespace()
-                    .nth(1)
-                    .expect("The file descriptor is not a valid pidfd")
-                    .trim()
-                    .parse::<c_int>()
-                    .expect("The pid is not valid")
-            );
+            Ok(JailedChild::new(
+                context,
+                ParentData {
+                    pid,
+                    child_stack,
+                    execution_result: ExecutionResult::new()
+                }
+            ))
         }
-
-        Ok(JailedChild::new(context))
     }
 }
